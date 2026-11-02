@@ -82,9 +82,16 @@ Use `MEMOMIND_DEBUG=1` to print hook diagnostics to stderr.
 
 ### 3. Run the phone plugin
 
+Build the package first. This copies MemoMind's Web SDK from your toolkit checkout into
+`phone/vendor/`. The SDK isn't committed here because MemoMind keeps the rights to it:
+
+```sh
+cd plugins/agent-dashboard
+MEMOMIND_SDK=~/path/to/plugin-open-platform npm run package   # → dist/agent-dashboard-0.1.0.mmpkg
+```
+
 **Simulator (no glasses needed):** in Desktop Studio, import the toolkit workspace and use
-*Import package* to load `dist/agent-dashboard-<version>.mmpkg` (build it with `npm run package`, see
-below). Pick **GM Web Bridge** as the glasses plugin. Open the phone page, enter the relay URL and
+*Import package* to load `dist/agent-dashboard-<version>.mmpkg`. Pick **GM Web Bridge** as the glasses plugin. Open the phone page, enter the relay URL and
 token, then press **Save & connect**. Studio has no nod/shake controls, so answer with the phone
 buttons there.
 
@@ -100,6 +107,7 @@ command that isn't allowlisted). The card appears on the glasses within about a 
 
 ```sh
 cd plugins/agent-dashboard
+MEMOMIND_SDK=/path/to/plugin-open-platform npm run setup   # vendor the Web SDK into phone/vendor/ (gitignored)
 npm test                                       # 31 unit tests (relay, hook, HUD logic)
 
 # local relay
@@ -141,6 +149,8 @@ All routes except `/health` need `Authorization: Bearer <RELAY_TOKEN>`.
    layout in [`phone/screen.js`](phone/screen.js).
 3. Long-press is avoided on purpose, because it exits plugins.
 4. One relay = one user. The relay isn't designed for sharing between people.
+5. If this is ever submitted for MemoMind review/distribution, their terms (§8.5) require disclosing any
+   AI providers used. This plugin calls no AI itself; it only relays Claude Code's own prompts.
 
 ## Roadmap
 
