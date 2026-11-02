@@ -152,7 +152,7 @@ await step('MCP: initialize + tools/list over stdio', async () => {
   assert.equal(init.result.serverInfo.name, 'memomind-glasses');
   mcp.notify('notifications/initialized');
   const list = await mcp.request('tools/list', {});
-  assert.deepEqual(list.result.tools.map((tool) => tool.name), ['glasses_notify', 'glasses_ask']);
+  assert.deepEqual(list.result.tools.map((tool) => tool.name), ['glasses_notify', 'glasses_ask', 'glasses_converse']);
   mcp.close();
 });
 

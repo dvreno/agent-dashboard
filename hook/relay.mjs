@@ -40,14 +40,37 @@ export function createRelay({ url, token }) {
     postEvent: (event) => request('POST', '/v1/events', event, 4000),
     feed: () => request('GET', '/v1/feed?since=0&wait=0', null, 8000),
     cancel: (id) => request('POST', `/v1/asks/${encodeURIComponent(id)}/cancel`, {}, 5000),
+    attachClip: (id, clipId) => request('POST', `/v1/asks/${encodeURIComponent(id)}/attach`, { clipId }, 8000),
+
+    async uploadClip(bytes, type) {
+      const response = await fetch(`${url}/v1/clips`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': type },
+        body: bytes,
+        signal: AbortSignal.timeout(30_000),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(`${response.status} ${data.error || response.statusText}`);
+      return data.clip;
+    },
+
+    async downloadClip(id) {
+      const response = await fetch(`${url}/v1/clips/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error(`${response.status} clip download failed`);
+      return { bytes: Buffer.from(await response.arrayBuffer()), type: response.headers.get('Content-Type') || '' };
+    },
 
     // Create an ask and long-poll until it is answered, expires, or the local
     // deadline passes. Never resolves to "allow" on its own: on timeout the ask
     // is withdrawn and returned with its non-allow state.
-    async askAndWait(ask, timeoutS, { log = () => {}, signal } = {}) {
+    async askAndWait(ask, timeoutS, { log = () => {}, signal, onCreated } = {}) {
       const deadline = Date.now() + timeoutS * 1000;
       const created = (await request('POST', '/v1/asks', { ...ask, timeoutMs: timeoutS * 1000 }, 8000)).ask;
       log(`ask ${created.id} created (${created.risk})`);
+      onCreated?.(created);
       let current = created;
       while (current.state === 'pending' && Date.now() < deadline && !signal?.aborted) {
         const wait = Math.min(25_000, Math.max(deadline - Date.now(), 0));

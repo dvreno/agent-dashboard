@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyFeed, buildScreen, CONFIRM_WINDOW_MS, createState, diffScreen, dropAsk, handleInput, SETTLE_MS, SCREEN,
+  applyFeed, buildScreen, CONFIRM_WINDOW_MS, createState, diffScreen, dropAsk, handleInput, paginate, SETTLE_MS, SCREEN,
 } from '../phone/screen.js';
 
 const T0 = 1_000_000;
@@ -126,4 +126,29 @@ test('question asks use yes/no wording on the HUD', () => {
   const [, body, footer] = buildScreen(state, T0);
   assert.equal(body.text, 'Merge PR #2 now?');
   assert.match(footer.text, /^NOD = yes {3}SHAKE = no/);
+});
+
+test('listen cards: click records then sends, shake ends, head turns page captions', () => {
+  const long = 'This is a long answer from Claude. '.repeat(20);
+  const state = withAsks([ask('l', { kind: 'listen', title: 'Claude', detail: long })]);
+  const t = T0 + SETTLE_MS;
+  assert.deepEqual(handleInput(state, { type: 'button', action: 'single' }, t).actions, [{ type: 'record-start', id: 'l' }]);
+  state.recording = { askId: 'l', startedAt: t };
+  assert.match(buildScreen(state, t + 3200)[2].text, /● REC 3s \/ 15s {3}CLICK = send/);
+  assert.deepEqual(handleInput(state, { type: 'gesture', gesture: 'shake' }, t + 3300).actions, [], 'no ending mid-recording');
+  assert.deepEqual(handleInput(state, { type: 'button', action: 'single' }, t + 4000).actions, [{ type: 'record-stop', id: 'l' }]);
+  state.recording = null;
+  assert.match(buildScreen(state, t)[0].text, /1\/\d+ ←→/);
+  handleInput(state, { type: 'gesture', gesture: 'right' }, t);
+  assert.equal(state.page, 1);
+  assert.match(buildScreen(state, t)[0].text, /2\/\d+/);
+  assert.deepEqual(handleInput(state, { type: 'gesture', gesture: 'shake' }, t).actions, [
+    { type: 'answer', id: 'l', decision: 'deny', via: 'shake' },
+  ]);
+});
+
+test('paginate splits at word boundaries and every page fits', () => {
+  const pages = paginate('word '.repeat(200));
+  assert.ok(pages.length > 1);
+  for (const page of pages) assert.ok(page.length <= 230 && !page.startsWith(' '));
 });

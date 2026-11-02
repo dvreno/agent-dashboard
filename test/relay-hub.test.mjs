@@ -141,3 +141,28 @@ test('asks default to kind=permission and accept kind=question', () => {
   assert.equal(hub.createAsk({ title: 'y', kind: 'question' }).kind, 'question');
   assert.equal(hub.createAsk({ title: 'z', kind: 'bogus' }).kind, 'permission');
 });
+
+test('listen asks accept reply (text or clip) or deny, not allow', async () => {
+  const hub = new Hub(fakeEnv());
+  const ask = hub.createAsk({ title: 'Claude', kind: 'listen', detail: 'x'.repeat(1500) });
+  assert.equal(ask.detail.length, 1500, 'listen captions keep up to 2000 chars');
+  assert.throws(() => hub.answerAsk(ask.id, { decision: 'allow' }), /reply or deny/);
+  assert.throws(() => hub.answerAsk(ask.id, { decision: 'reply' }), /text or clipId/);
+  assert.throws(() => hub.answerAsk(ask.id, { decision: 'reply', clipId: '../etc/passwd' }), /invalid clipId/);
+  const waiting = hub.waitAsk(ask.id, 5000);
+  hub.answerAsk(ask.id, { decision: 'reply', clipId: '0b7f6a1e-1111-4222-8333-944455556666', via: 'voice' });
+  const done = await waiting;
+  assert.equal(done.state, 'reply');
+  assert.equal(done.reply.clipId, '0b7f6a1e-1111-4222-8333-944455556666');
+});
+
+test('attachClip adds speech to a pending ask and wakes the feed', async () => {
+  const hub = new Hub(fakeEnv());
+  const ask = hub.createAsk({ title: 'Claude', kind: 'listen' });
+  const waiting = hub.waitFeed(hub.seq, 25_000);
+  hub.attachClip(ask.id, { clipId: 'abcdef12-0000-4000-8000-000000000000' });
+  const feed = await waiting;
+  assert.equal(feed.pending[0].clipId, 'abcdef12-0000-4000-8000-000000000000');
+  hub.answerAsk(ask.id, { decision: 'deny' });
+  assert.throws(() => hub.attachClip(ask.id, { clipId: 'abcdef12-0000-4000-8000-000000000000' }), /already/);
+});

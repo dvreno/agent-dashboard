@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- connect-src: your relay. Default allows Cloudflare *.workers.dev; add your custom domain if you use one. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://*.workers.dev http://localhost:8787 http://127.0.0.1:8787; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; connect-src https://*.workers.dev http://localhost:8787 http://127.0.0.1:8787; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
   <title>Agent Dashboard</title>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="plugin.js"></script>

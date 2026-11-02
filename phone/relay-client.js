@@ -43,6 +43,23 @@ export function createRelayClient({ url, token, fetchImpl = (...args) => fetch(.
     // Authenticated round trip, used by the "Test connection" button.
     check: () => request('GET', '/v1/feed?since=0&wait=0', null, { timeoutMs: 8000 }),
     feed: (since, waitMs, signal) => request('GET', `/v1/feed?since=${since}&wait=${waitMs}`, null, { signal, timeoutMs: waitMs + 10_000 }),
-    answer: (id, decision, via) => request('POST', `/v1/asks/${encodeURIComponent(id)}/answer`, { decision, via }, { timeoutMs: 10_000 }),
+    answer: (id, decision, via, extra = {}) => request('POST', `/v1/asks/${encodeURIComponent(id)}/answer`, { decision, via, ...extra }, { timeoutMs: 10_000 }),
+
+    async uploadClip(blob) {
+      const response = await fetchImpl(`${base}/v1/clips`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': (blob.type || 'audio/ogg').split(';')[0] },
+        body: blob,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new RelayError(response.status, data.error || `HTTP ${response.status}`);
+      return data.clip;
+    },
+
+    async downloadClip(id) {
+      const response = await fetchImpl(`${base}/v1/clips/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new RelayError(response.status, `clip HTTP ${response.status}`);
+      return response.blob();
+    },
   };
 }

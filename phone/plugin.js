@@ -2,10 +2,10 @@
 // permission requests with head gestures (nod = allow, shake = deny).
 // Runs in the MemoMind App WebView and draws through the existing web_bridge GMP.
 
-import { createGMPlugin } from './vendor/gm-plugin-web-sdk.esm.js';
+import { createGMPlugin, opusRecordingToOgg } from './vendor/gm-plugin-web-sdk.esm.js';
 import { createRelayClient } from './relay-client.js';
 import {
-  applyFeed, buildScreen, createState, diffScreen, dropAsk, focusedAsk, handleInput,
+  applyFeed, buildScreen, createState, diffScreen, dropAsk, focusedAsk, handleInput, MAX_RECORDING_MS,
 } from './screen.js';
 
 const STORAGE_KEY = 'agent-dashboard.settings';
@@ -25,6 +25,9 @@ let pageOpen = false;
 let pollAbort = null;
 let closed = false;
 let drawing = Promise.resolve();
+let capture = null;          // active glasses-mic recording session
+let playedClipId = '';       // last Claude speech clip played
+const speaker = new Audio(); // OS routes this (glasses speaker when connected via HFP)
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()}  ${message}`;
@@ -78,6 +81,10 @@ function renderPhoneAsks() {
     return;
   }
   for (const ask of state.pending) {
+    if (ask.kind === 'listen') {
+      ui.asks.append(listenCard(ask));
+      continue;
+    }
     const card = document.createElement('article');
     card.className = `ask ${ask.risk === 'high' ? 'high' : ''}`;
     const title = document.createElement('h3');
@@ -97,12 +104,97 @@ function renderPhoneAsks() {
   }
 }
 
+function listenCard(ask) {
+  const card = document.createElement('article');
+  card.className = 'ask listen';
+  const title = document.createElement('h3');
+  title.textContent = `Claude · ${ask.project || 'claude'}`;
+  const captions = document.createElement('pre');
+  captions.textContent = ask.detail;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Type a reply…';
+  const send = document.createElement('button');
+  send.textContent = 'Send';
+  send.onclick = () => {
+    if (input.value.trim()) void answer(ask.id, 'reply', 'typed', { text: input.value.trim() });
+  };
+  input.onkeydown = (event) => { if (event.key === 'Enter') send.onclick(); };
+  const talk = document.createElement('button');
+  talk.className = 'secondary';
+  talk.textContent = state.recording?.askId === ask.id ? 'Stop & send' : 'Talk (glasses mic)';
+  talk.onclick = () => (state.recording?.askId === ask.id ? stopRecording() : startRecording(ask.id));
+  const end = document.createElement('button');
+  end.className = 'deny';
+  end.textContent = 'End';
+  end.onclick = () => answer(ask.id, 'deny', 'phone');
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.append(send, talk, end);
+  card.append(title, captions, input, row);
+  return card;
+}
+
+// ---- voice ----------------------------------------------------------------------
+
+async function startRecording(askId) {
+  if (capture || !client) return;
+  try {
+    speaker.pause();
+    capture = await gm.audio.openRecording({ pickupMode: 'frontFocus', noiseReduction: true, maxDurationMs: MAX_RECORDING_MS });
+    state.recording = { askId, startedAt: Date.now() };
+    log('Recording reply…');
+  } catch (error) {
+    capture = null;
+    log(`Mic unavailable: ${error.code || ''} ${error.message || error}`);
+  }
+  renderPhoneAsks();
+  draw();
+}
+
+async function stopRecording() {
+  const session = capture;
+  const recording = state.recording;
+  if (!session || !recording) return;
+  capture = null;
+  state.recording = null;
+  state.sending = recording.askId;
+  draw();
+  try {
+    const result = await session.stop();
+    const blob = opusRecordingToOgg(result);
+    const clip = await client.uploadClip(blob);
+    await answer(recording.askId, 'reply', 'voice', { clipId: clip.id });
+  } catch (error) {
+    log(`Reply failed: ${error.code || ''} ${error.message || error}`);
+  } finally {
+    state.sending = null;
+    renderPhoneAsks();
+    draw();
+  }
+}
+
+// Play Claude's spoken reply once, when its clip is attached to the focused card.
+async function playSpeech() {
+  const ask = focusedAsk(state);
+  if (!client || ask?.kind !== 'listen' || !ask.clipId || ask.clipId === playedClipId || state.recording) return;
+  playedClipId = ask.clipId;
+  try {
+    const blob = await client.downloadClip(ask.clipId);
+    if (speaker.src) URL.revokeObjectURL(speaker.src);
+    speaker.src = URL.createObjectURL(blob);
+    await speaker.play();
+  } catch (error) {
+    log(`Speech playback failed: ${error.message || error}`);
+  }
+}
+
 // ---- relay --------------------------------------------------------------------
 
-async function answer(id, decision, via) {
+async function answer(id, decision, via, extra) {
   if (!client) return;
   try {
-    await client.answer(id, decision, via);
+    await client.answer(id, decision, via, extra);
     log(`${decision.toUpperCase()} via ${via}`);
   } catch (error) {
     log(`Answer failed: ${error.message}`); // 409 = already answered/expired; the next feed corrects the view
@@ -125,6 +217,7 @@ async function pollLoop() {
       for (const event of feed.events) log(`${event.project || event.session}: ${event.title}${event.text ? ` — ${event.text}` : ''}`);
       if (focusedAsk(state)?.id !== hadFocus) renderPhoneAsks();
       draw();
+      void playSpeech();
     } catch (error) {
       if (closed || pollAbort.signal.aborted) return;
       setConnection(error.status === 401 ? 'bad token' : 'offline');
@@ -183,12 +276,16 @@ function onInput(input) {
   for (const action of actions) {
     if (action.type === 'answer') void answer(action.id, action.decision, action.via);
     if (action.type === 'redraw') draw();
+    if (action.type === 'record-start') void startRecording(action.id);
+    if (action.type === 'record-stop') void stopRecording();
   }
 }
 
 // Countdown refresh: only the footer text changes, and only while a card is shown.
 setInterval(() => {
   if (focusedAsk(state) || state.armed) draw();
+  // The SDK caps short recordings; send automatically at the limit.
+  if (state.recording && Date.now() - state.recording.startedAt >= MAX_RECORDING_MS) void stopRecording();
 }, 1000);
 
 // ---- startup ------------------------------------------------------------------
@@ -207,6 +304,10 @@ async function start() {
         pageOpen = false;
         draw(true);
       }
+    });
+    gm.audio.onCaptureState((event) => {
+      if (event.state === 'stopped' && capture) void stopRecording();
+      if (event.state === 'error') log(`Mic error: ${event.errorCode || event.message || 'unknown'}`);
     });
     gm.on('runtime.lifecycleChanged', (event) => log(`Lifecycle: ${event.state || JSON.stringify(event)}`));
 

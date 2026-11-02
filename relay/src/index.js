@@ -8,9 +8,12 @@
 //   GET  /v1/asks/:id?wait=ms       agent → long-poll for the decision
 //   POST /v1/asks/:id/answer        phone → { decision: allow|deny, via }
 //   POST /v1/asks/:id/cancel        agent → withdraw an ask
+//   POST /v1/asks/:id/attach        agent → { clipId } attach audio to a pending ask
 //   GET  /v1/feed?since=seq&wait=ms phone → long-poll for new events + pending asks
+//   POST /v1/clips                  either → raw audio body (≤1.5 MB) → { clip: { id, type, size } }
+//   GET  /v1/clips/:id              either → the audio bytes (kept 15 minutes)
 
-import { Hub, HttpError } from './hub.js';
+import { CLIP_TTL_MS, Hub, HttpError, MAX_CLIP_BYTES } from './hub.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -87,6 +90,7 @@ export class HubObject {
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean); // ['v1', ...]
     const method = request.method;
+    if (parts[1] === 'clips') return this.routeClips(parts, method, request);
     const body = method === 'POST' ? await readJson(request) : null;
 
     if (parts[1] === 'events' && parts.length === 2 && method === 'POST') {
@@ -113,6 +117,11 @@ export class HubObject {
         await this.persist();
         return json(200, { ask });
       }
+      if (parts.length === 4 && parts[3] === 'attach' && method === 'POST') {
+        const ask = this.hub.attachClip(id, body);
+        await this.persist();
+        return json(200, { ask });
+      }
       if (parts.length === 4 && parts[3] === 'cancel' && method === 'POST') {
         const ask = this.hub.cancelAsk(id);
         await this.persist();
@@ -120,6 +129,39 @@ export class HubObject {
       }
     }
     return json(404, { error: 'not found' });
+  }
+
+  // Short audio clips (TTS replies, recorded voice replies). Stored as
+  // individual Durable Object values with an index for expiry.
+  async routeClips(parts, method, request) {
+    if (parts.length === 2 && method === 'POST') {
+      const type = (request.headers.get('Content-Type') || '').split(';')[0].trim();
+      if (!/^audio\/[a-z0-9.+-]+$/i.test(type)) throw new HttpError(415, 'Content-Type must be audio/*');
+      const data = await request.arrayBuffer();
+      if (data.byteLength === 0) throw new HttpError(400, 'empty clip');
+      if (data.byteLength > MAX_CLIP_BYTES) throw new HttpError(413, 'clip too large');
+      const id = crypto.randomUUID();
+      const index = await this.pruneClips();
+      index[id] = Date.now();
+      await this.state.storage.put({ [`clip:${id}`]: { type, data }, clipIndex: index });
+      return json(201, { clip: { id, type, size: data.byteLength } });
+    }
+    if (parts.length === 3 && method === 'GET') {
+      const clip = await this.state.storage.get(`clip:${parts[2]}`);
+      if (!clip) throw new HttpError(404, 'clip not found');
+      return new Response(clip.data, { headers: { 'Content-Type': clip.type, 'Cache-Control': 'no-store', ...CORS } });
+    }
+    return json(404, { error: 'not found' });
+  }
+
+  async pruneClips() {
+    const index = (await this.state.storage.get('clipIndex')) || {};
+    const expired = Object.keys(index).filter((id) => Date.now() - index[id] > CLIP_TTL_MS);
+    if (expired.length) {
+      await this.state.storage.delete(expired.map((id) => `clip:${id}`));
+      for (const id of expired) delete index[id];
+    }
+    return index;
   }
 }
 

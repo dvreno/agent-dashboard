@@ -5,6 +5,8 @@
 export const SCREEN = { width: 600, height: 350 };
 export const CONFIRM_WINDOW_MS = 5000;   // time to press the button after a nod on a high-risk ask
 export const SETTLE_MS = 800;            // ignore gestures right after a new card appears
+export const MAX_RECORDING_MS = 15_000;  // SDK short-recording limit
+export const CAPTION_PAGE_CHARS = 230;   // ~6 lines of firmware text in the body box
 const MAX_SESSIONS = 4;
 
 const BLANK = ' '; // updateText requires non-empty text
@@ -28,6 +30,9 @@ export function createState() {
     focusId: null,      // ask currently shown
     shownAt: 0,         // when the focused ask first appeared
     armed: null,        // { askId, until }
+    page: 0,            // caption page of the focused listen card
+    recording: null,    // { askId, startedAt } while the glasses mic is recording a reply
+    sending: null,      // askId while a recorded reply is uploading
     serverOffset: 0,    // relay clock minus phone clock
     connection: 'connecting',
   };
@@ -70,7 +75,25 @@ function refocus(state, phoneNow) {
     state.focusId = state.pending[0]?.id ?? null;
     state.shownAt = phoneNow;
     state.armed = null;
+    state.page = 0;
   }
+}
+
+// Split captions into HUD pages at word boundaries, keeping paragraph breaks.
+export function paginate(textValue, perPage = CAPTION_PAGE_CHARS) {
+  const words = String(textValue ?? '').replace(/[ \t]+/g, ' ').trim().split(/(?<=\n)|(?= )/);
+  const pages = [];
+  let current = '';
+  for (const word of words) {
+    if (current && (current + word).length > perPage) {
+      pages.push(current.trim());
+      current = word.trimStart();
+    } else {
+      current += word;
+    }
+  }
+  if (current.trim() || pages.length === 0) pages.push(current.trim());
+  return pages;
 }
 
 export function focusedAsk(state) {
@@ -85,6 +108,7 @@ export function handleInput(state, input, phoneNow) {
   if (!ask) return { actions };
 
   const settled = phoneNow - state.shownAt >= SETTLE_MS;
+  if (ask.kind === 'listen') return { actions: handleListenInput(state, ask, input, phoneNow, settled) };
   if (input.type === 'gesture' && input.gesture === 'nod' && settled) {
     if (ask.risk === 'high') {
       state.armed = { askId: ask.id, until: phoneNow + CONFIRM_WINDOW_MS };
@@ -110,6 +134,35 @@ export function handleInput(state, input, phoneNow) {
   return { actions };
 }
 
+// Voice-conversation card: click to talk / click to send, shake to end,
+// turn head left/right to page through long captions.
+function handleListenInput(state, ask, input, phoneNow, settled) {
+  const recordingThis = state.recording?.askId === ask.id;
+  if (input.type === 'button' && input.action === 'single') {
+    if (state.sending === ask.id) return [];
+    return [{ type: recordingThis ? 'record-stop' : 'record-start', id: ask.id }];
+  }
+  if (input.type === 'gesture' && input.gesture === 'shake' && settled && !recordingThis) {
+    return [{ type: 'answer', id: ask.id, decision: 'deny', via: 'shake' }];
+  }
+  if (input.type === 'gesture' && (input.gesture === 'right' || input.gesture === 'left')) {
+    const pages = paginate(ask.detail).length;
+    const next = Math.min(Math.max(state.page + (input.gesture === 'right' ? 1 : -1), 0), pages - 1);
+    if (next !== state.page) {
+      state.page = next;
+      return [{ type: 'redraw' }];
+    }
+  }
+  if (input.type === 'button' && input.action === 'double' && state.pending.length > 1 && !recordingThis) {
+    const index = state.pending.findIndex((item) => item.id === ask.id);
+    state.focusId = state.pending[(index + 1) % state.pending.length].id;
+    state.shownAt = phoneNow;
+    state.page = 0;
+    return [{ type: 'redraw' }];
+  }
+  return [];
+}
+
 // Remove an answered ask locally so the HUD moves on immediately.
 export function dropAsk(state, id, phoneNow) {
   state.pending = state.pending.filter((ask) => ask.id !== id);
@@ -127,7 +180,29 @@ export function buildScreen(state, phoneNow) {
   return ask ? askScreen(state, ask, phoneNow) : statusScreen(state, phoneNow);
 }
 
+function listenScreen(state, ask, phoneNow) {
+  const pages = paginate(ask.detail);
+  const page = Math.min(state.page, pages.length - 1);
+  const more = state.pending.length > 1 ? `  (+${state.pending.length - 1})` : '';
+  const header = `CLAUDE · ${clip(ask.project || 'claude', 24)}${more}${pages.length > 1 ? `   ${page + 1}/${pages.length} ←→` : ''}`;
+  let footer;
+  if (state.sending === ask.id) {
+    footer = 'Sending your reply…';
+  } else if (state.recording?.askId === ask.id) {
+    const seconds = Math.min(Math.floor((phoneNow - state.recording.startedAt) / 1000), MAX_RECORDING_MS / 1000);
+    footer = `● REC ${seconds}s / ${MAX_RECORDING_MS / 1000}s   CLICK = send`;
+  } else {
+    footer = 'CLICK = talk   SHAKE = end';
+  }
+  return [
+    text(1, 10, 6, 580, 40, header),
+    text(2, 10, 50, 580, 210, pages[page] || BLANK, { border: 2, radius: 10 }),
+    text(3, 10, 268, 580, 76, footer),
+  ];
+}
+
 function askScreen(state, ask, phoneNow) {
+  if (ask.kind === 'listen') return listenScreen(state, ask, phoneNow);
   const serverNow = phoneNow + state.serverOffset;
   const secondsLeft = Math.max(0, Math.ceil((ask.expiresAt - serverNow) / 1000));
   const more = state.pending.length > 1 ? `  (+${state.pending.length - 1} more, double-click)` : '';

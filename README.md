@@ -141,6 +141,76 @@ All routes except `/health` need `Authorization: Bearer <RELAY_TOKEN>`.
 | POST | `/v1/asks/:id/answer` | phone | `{decision: allow\|deny, via}`. 409 if already resolved |
 | GET | `/v1/feed?since=seq&wait=ms` | phone | long-poll for new events and the current pending asks |
 
+## Voice conversations (phase 5)
+
+Talk to your Claude Code session through the glasses. Speech-to-text and text-to-speech
+run locally on your Mac with [audio.cpp](https://github.com/0xShug0/audio.cpp) on Metal.
+
+```
+You speak ─▶ glasses mic ─▶ phone (Ogg Opus, ≤15 s) ─▶ relay ─▶ Mac: ffmpeg → Qwen3-ASR 1.7B ─▶ text
+Claude replies ─▶ Mac: Kokoro TTS → MP3 ─▶ relay ─▶ phone plays it + HUD captions (paged)
+```
+
+- **Voice mode (Stop hook).** With voice mode on, every time Claude finishes a turn its reply is
+  shown on the HUD as captions and spoken by Kokoro. **Click** the glasses button to talk, **click
+  again** to send (or it sends at 15 s), and **shake** to end the conversation. Your words are
+  transcribed on the Mac and handed back to the *same* session as the next instruction. If you
+  say nothing within 180 s the session stops normally. Turn head left/right to page long captions.
+- **`glasses_converse` MCP tool.** Claude can start a spoken exchange mid-task and get your answer
+  back as text.
+- The phone page also has a text box, so you can type replies (useful in Studio, which can't
+  simulate the glasses mic).
+
+Measured on an M1 Max (warm): Kokoro ≈ 0.4 s for a 5 s sentence; Qwen3-ASR 1.7B ≈ 0.5 s per reply.
+The first request after the server starts loads the model (5–15 s).
+
+### Setup (macOS)
+
+```sh
+brew tap 0xShug0/audio-cpp && brew trust 0xShug0/audio-cpp && brew install audio-cpp espeak-ng ffmpeg
+mkdir -p ~/MemoMind/audio-models && cd ~/MemoMind/audio-models
+audiocpp_model_manager install kokoro_82m_bf16 --models-dir .
+audiocpp_model_manager install qwen3_asr_1_7b_q8_0 --models-dir .
+```
+
+`~/.claude/memomind/audiocpp-server.json`:
+
+```json
+{
+  "host": "127.0.0.1", "port": 8089, "backend": "metal", "lazy_load": true,
+  "models": [
+    { "id": "kokoro", "family": "kokoro_tts", "task": "tts", "mode": "offline",
+      "path": "/Users/YOU/MemoMind/audio-models/Kokoro-82M-GGUF/kokoro-82m-bf16.gguf",
+      "default_voice_preset": { "voice_id": "af_heart" } },
+    { "id": "qwen3-asr", "family": "qwen3_asr", "task": "asr", "mode": "offline",
+      "path": "/Users/YOU/MemoMind/audio-models/Qwen3-ASR-1.7B-GGUF" }
+  ]
+}
+```
+
+```sh
+audiocpp_server --config ~/.claude/memomind/audiocpp-server.json --log-file ~/.claude/memomind/audiocpp-server.log &
+cp hook/*.mjs ~/.claude/memomind/
+node ~/.claude/memomind/voicectl.mjs on      # or off / status
+```
+
+Register the voice Stop hook (synchronous; it exits in ~0.1 s when voice mode is off):
+
+```json
+"Stop": [{ "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-voice-hook.mjs\"", "timeout": 600 }] }]
+```
+
+Options: `MEMOMIND_TTS=off` (captions only, replies still transcribed), `MEMOMIND_TTS_VOICE`
+(any Kokoro voice id), `MEMOMIND_VOICE_TIMEOUT` (seconds, default 180),
+`MEMOMIND_AUDIOCPP_URL` (default `http://127.0.0.1:8089`).
+
+Tests: `node test/voice-e2e.mjs` (needs `RELAY_URL`, `RELAY_TOKEN`, a running audio.cpp server,
+and macOS `say`, which plays the user's voice).
+
+**Unverified until real glasses:** whether the phone routes Claude's audio to the glasses speaker
+(the SDK has no speaker-routing API; captions always work), mic quality outdoors, and whether
+recording works with the phone locked.
+
 ## Known limits / to verify on hardware
 
 1. **Foreground only.** The MemoMind App must be open with the plugin running. We don't yet know whether
@@ -154,6 +224,6 @@ All routes except `/health` need `Authorization: Bearer <RELAY_TOKEN>`.
 
 ## Roadmap
 
-- Phase 3: MCP server so any agent can call `glasses_notify` / `glasses_ask`.
+- ~~Phase 3: MCP server~~ done: `glasses_notify`, `glasses_ask`, `glasses_converse` (see `hook/memomind-mcp.mjs`).
 - Phase 4: custom `.gmp` with icons, history scrolling and ring support.
-- Phase 5: hold-to-talk voice replies (glasses mic → speech-to-text → Claude).
+- ~~Phase 5: voice replies~~ done (see Voice conversations above).

@@ -42,7 +42,7 @@ test('notifications get no response; unknown requests get -32601', async () => {
 test('tools/list returns both tools with schemas', async () => {
   const server = createServer({ relay: fakeRelay(), configured: true });
   const { result } = await server.handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['glasses_notify', 'glasses_ask']);
+  assert.deepEqual(result.tools.map((tool) => tool.name), ['glasses_notify', 'glasses_ask', 'glasses_converse']);
   for (const tool of TOOLS) assert.equal(tool.inputSchema.type, 'object');
 });
 
@@ -94,4 +94,13 @@ test('relay errors and missing config become tool errors, not crashes', async ()
 
   const unconfigured = createServer({ relay: fakeRelay(), configured: false });
   assert.equal((await call(unconfigured, 'glasses_ask', { question: 'x' })).result.isError, true);
+});
+
+test('glasses_converse returns the transcript or "no reply"', async () => {
+  const replies = [{ text: 'use the staging database', via: 'voice' }, { text: null, state: 'deny' }, { text: null, state: 'expired' }];
+  const voice = { converse: async () => replies.shift() };
+  const server = createServer({ relay: fakeRelay(), voice, configured: true });
+  assert.equal(textOf(await call(server, 'glasses_converse', { message: 'Which database?' })), 'The user replied: use the staging database');
+  assert.match(textOf(await call(server, 'glasses_converse', { message: 'x' })), /ended the conversation/);
+  assert.match(textOf(await call(server, 'glasses_converse', { message: 'x' })), /no answer/);
 });

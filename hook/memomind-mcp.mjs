@@ -18,6 +18,7 @@ import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { redact, truncate } from './lib.mjs';
 import { createRelay, relayConfig } from './relay.mjs';
+import { createVoice } from './voice.mjs';
 
 export const SERVER_INFO = { name: 'memomind-glasses', version: '0.2.0' };
 const DEFAULT_PROTOCOL = '2025-06-18';
@@ -64,13 +65,28 @@ export const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'glasses_converse',
+    description: 'Say something to the user on their MemoMind glasses (captions, plus speech when available) and wait for '
+      + 'their spoken reply, transcribed to text. Use for open-ended questions that need more than yes/no. '
+      + 'Returns the transcript, or "no reply" if they ended the conversation or did not answer in time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'What to say. Keep it short and speakable; it is read aloud.' },
+        timeout_seconds: { type: 'number', description: `How long to wait for the reply (default ${DEFAULT_ASK_TIMEOUT_S}, max ${MAX_ASK_TIMEOUT_S}).` },
+      },
+      required: ['message'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 function text(value, isError = false) {
   return { content: [{ type: 'text', text: value }], ...(isError ? { isError: true } : {}) };
 }
 
-export function createServer({ relay, configured, cwd = process.cwd() }) {
+export function createServer({ relay, voice, configured, cwd = process.cwd() }) {
   const project = basename(cwd);
   const inflight = new Map(); // request id -> AbortController
 
@@ -106,6 +122,21 @@ export function createServer({ relay, configured, cwd = process.cwd() }) {
         if (result.state === 'allow') return text('yes');
         if (result.state === 'deny') return text('no');
         return text(`no answer (the user did not respond within ${timeoutS}s; treat this as not approved)`);
+      } finally {
+        inflight.delete(id);
+      }
+    }
+    if (name === 'glasses_converse') {
+      if (!args.message || typeof args.message !== 'string') return text('message is required', true);
+      const timeoutS = Math.min(Math.max(Number(args.timeout_seconds) || DEFAULT_ASK_TIMEOUT_S, 10), MAX_ASK_TIMEOUT_S);
+      const controller = new AbortController();
+      inflight.set(id, controller);
+      try {
+        const result = await voice.converse(args.message, { timeoutS, project, session: 'mcp', signal: controller.signal });
+        if (result.text) return text(`The user replied${result.via === 'typed' ? ' (typed)' : ''}: ${result.text}`);
+        return text(result.state === 'deny'
+          ? 'no reply (the user ended the conversation)'
+          : `no reply (no answer within ${timeoutS}s)`);
       } finally {
         inflight.delete(id);
       }
@@ -155,7 +186,8 @@ export function createServer({ relay, configured, cwd = process.cwd() }) {
 // stdio transport: newline-delimited JSON-RPC.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const config = relayConfig();
-  const server = createServer({ relay: createRelay(config), configured: Boolean(config.url && config.token) });
+  const relay = createRelay(config);
+  const server = createServer({ relay, voice: createVoice({ relay }), configured: Boolean(config.url && config.token) });
   const lines = createInterface({ input: process.stdin });
   lines.on('line', (line) => {
     if (!line.trim()) return;

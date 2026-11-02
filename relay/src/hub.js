@@ -12,6 +12,13 @@ export const RESOLVED_RETENTION_MS = 10 * 60_000;
 
 const EVENT_KINDS = new Set(['session', 'prompt', 'tool', 'notify', 'done', 'error', 'status']);
 const DECISIONS = new Set(['allow', 'deny']);
+// "listen" asks are voice-conversation turns: the HUD shows what Claude said
+// (and plays its audio clip); the wearer answers with a reply (recorded clip or
+// typed text) or "deny" to end the conversation.
+const ASK_KINDS = new Set(['permission', 'question', 'listen']);
+export const MAX_CLIP_BYTES = 1_500_000;
+export const CLIP_TTL_MS = 15 * 60_000;
+const CLIP_ID = /^[A-Za-z0-9-]{8,64}$/;
 
 export class HttpError extends Error {
   constructor(status, message) {
@@ -87,7 +94,7 @@ export class Hub {
     if (pending.length >= MAX_PENDING_ASKS) throw new HttpError(429, 'too many pending asks');
     const ttl = Math.min(Math.max(Number(input?.timeoutMs) || DEFAULT_ASK_TTL_MS, 5_000), MAX_ASK_TTL_MS);
     const risk = input?.risk === 'high' ? 'high' : 'normal';
-    const kind = input?.kind === 'question' ? 'question' : 'permission';
+    const kind = ASK_KINDS.has(input?.kind) ? input.kind : 'permission';
     const ask = {
       id: this.randomId(),
       seq: ++this.seq,
@@ -99,7 +106,9 @@ export class Hub {
       session: str(input?.session, 64, 'session'),
       project: str(input?.project, 60, 'project'),
       title: str(input?.title, 80, 'title', { required: true }),
-      detail: str(input?.detail, 400, 'detail'),
+      detail: str(input?.detail, kind === 'listen' ? 2000 : 400, 'detail'),
+      clipId: clipId(input?.clipId),
+      reply: null,
       reason: '',
       via: '',
       answeredAt: 0,
@@ -119,14 +128,35 @@ export class Hub {
   answerAsk(id, input) {
     const ask = this.getAsk(id);
     const decision = input?.decision;
-    if (!DECISIONS.has(decision)) throw new HttpError(400, 'decision must be allow or deny');
+    if (ask.kind === 'listen') {
+      if (decision !== 'reply' && decision !== 'deny') throw new HttpError(400, 'decision must be reply or deny');
+    } else if (!DECISIONS.has(decision)) {
+      throw new HttpError(400, 'decision must be allow or deny');
+    }
     if (ask.state !== 'pending') throw new HttpError(409, `ask already ${ask.state}`);
+    if (decision === 'reply') {
+      const reply = { text: str(input.text, 2000, 'text'), clipId: clipId(input.clipId) };
+      if (!reply.text && !reply.clipId) throw new HttpError(400, 'reply needs text or clipId');
+      ask.reply = reply;
+    }
     ask.state = decision;
     ask.via = str(input.via, 20, 'via') || 'unknown';
     ask.reason = str(input.reason, 200, 'reason');
     ask.answeredAt = this.now();
     this.seq += 1; // any state change advances the feed so pollers refresh
     this.resolveAskWaiters(ask);
+    this.notifyFeed();
+    return ask;
+  }
+
+  // Attach an audio clip (e.g. text-to-speech of what Claude said) to a pending ask.
+  attachClip(id, input) {
+    const ask = this.getAsk(id);
+    if (ask.state !== 'pending') throw new HttpError(409, `ask already ${ask.state}`);
+    const value = clipId(input?.clipId);
+    if (!value) throw new HttpError(400, 'clipId is required');
+    ask.clipId = value;
+    this.seq += 1;
     this.notifyFeed();
     return ask;
   }
@@ -236,4 +266,10 @@ export class Hub {
     }
     this.askWaiters.delete(ask.id);
   }
+}
+
+function clipId(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string' || !CLIP_ID.test(value)) throw new HttpError(400, 'invalid clipId');
+  return value;
 }
