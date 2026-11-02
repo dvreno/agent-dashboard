@@ -1,0 +1,41 @@
+{
+  "id": "com.dvreno.agent-dashboard",
+  "name": "Agent Dashboard",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "bridgeVersion": "2.0",
+  "schemaVersion": 2,
+  "permissionPolicyVersion": 1,
+  "permissions": [
+    {
+      "name": "storage",
+      "required": true,
+      "reason": "Remember the relay URL and token"
+    },
+    {
+      "name": "display",
+      "required": true,
+      "reason": "Show agent status and approval cards on the glasses"
+    },
+    {
+      "name": "device.events",
+      "required": true,
+      "reason": "Nod or shake to answer approvals; button to confirm high-risk actions",
+      "scope": {
+        "types": ["button", "imuGesture", "connection"]
+      }
+    },
+    {
+      "name": "network",
+      "required": true,
+      "reason": "Connect to your own Claude Code relay"
+    }
+  ],
+  "deviceRequirements": {
+    "preferredPluginId": "com.gm.example.web-bridge",
+    "protocols": [
+      { "id": "gm.scene", "minVersion": "1.0" },
+      { "id": "gm.device-events", "minVersion": "1.0" }
+    ]
+  }
+}

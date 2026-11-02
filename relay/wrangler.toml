@@ -1,0 +1,14 @@
+name = "memomind-agent-relay"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "HubObject"
+
+# Free-plan compatible SQLite-backed Durable Object.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["HubObject"]
+
+# Secret (never commit it): wrangler secret put RELAY_TOKEN
