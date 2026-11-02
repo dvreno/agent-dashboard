@@ -132,13 +132,17 @@ function askScreen(state, ask, phoneNow) {
   const secondsLeft = Math.max(0, Math.ceil((ask.expiresAt - serverNow) / 1000));
   const more = state.pending.length > 1 ? `  (+${state.pending.length - 1} more, double-click)` : '';
   const header = `${ask.risk === 'high' ? '!! HIGH RISK  ' : ''}${clip(ask.project || 'claude', 24)}${ask.session ? ` · ${ask.session}` : ''}${more}`;
-  const body = `${clip(ask.title, 40)}\n${clip(ask.detail, 150)}`;
+  const question = ask.kind === 'question';
+  const [yes, no] = question ? ['yes', 'no'] : ['allow', 'deny'];
+  const body = question
+    ? `${clip(ask.title, 80)}${ask.detail ? `\n${clip(ask.detail, 150)}` : ''}`
+    : `${clip(ask.title, 40)}\n${clip(ask.detail, 150)}`;
   let footer;
   if (state.armed && state.armed.askId === ask.id && phoneNow <= state.armed.until) {
     const left = Math.max(0, Math.ceil((state.armed.until - phoneNow) / 1000));
-    footer = `PRESS BUTTON to confirm (${left}s)   SHAKE = deny`;
+    footer = `PRESS BUTTON to confirm (${left}s)   SHAKE = ${no}`;
   } else {
-    footer = `NOD = allow   SHAKE = deny   ${secondsLeft}s`;
+    footer = `NOD = ${yes}   SHAKE = ${no}   ${secondsLeft}s`;
   }
   return [
     text(1, 10, 6, 580, 40, header),

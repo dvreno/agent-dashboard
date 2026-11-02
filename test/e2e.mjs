@@ -115,4 +115,81 @@ await step('second answer to the same ask is rejected (409)', async () => {
   await hook;
 });
 
+// ---- MCP server over real stdio ---------------------------------------------
+
+function startMcp() {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../hook/memomind-mcp.mjs', import.meta.url))], {
+    env: { ...process.env, MEMOMIND_RELAY_URL: URL_, MEMOMIND_RELAY_TOKEN: TOKEN },
+  });
+  const waiting = new Map();
+  let buffer = '';
+  child.stdout.on('data', (chunk) => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf('\n')) >= 0) {
+      const message = JSON.parse(buffer.slice(0, index));
+      buffer = buffer.slice(index + 1);
+      waiting.get(message.id)?.(message);
+    }
+  });
+  let nextId = 1;
+  return {
+    request(method, params) {
+      const id = nextId++;
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+      return new Promise((resolve) => waiting.set(id, resolve));
+    },
+    notify(method, params) {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
+    },
+    close: () => child.kill(),
+  };
+}
+
+await step('MCP: initialize + tools/list over stdio', async () => {
+  const mcp = startMcp();
+  const init = await mcp.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '0' } });
+  assert.equal(init.result.serverInfo.name, 'memomind-glasses');
+  mcp.notify('notifications/initialized');
+  const list = await mcp.request('tools/list', {});
+  assert.deepEqual(list.result.tools.map((tool) => tool.name), ['glasses_notify', 'glasses_ask']);
+  mcp.close();
+});
+
+await step('MCP: glasses_notify reaches the feed', async () => {
+  const { seq } = await phone.check();
+  const mcp = startMcp();
+  await mcp.request('initialize', { protocolVersion: '2025-06-18' });
+  const result = await mcp.request('tools/call', { name: 'glasses_notify', arguments: { title: 'e2e notify', message: 'hello HUD', level: 'done' } });
+  assert.equal(result.result.content[0].text, 'Shown on the glasses.');
+  const feed = await phone.feed(seq, 0);
+  assert.ok(feed.events.some((event) => event.title === 'e2e notify' && event.kind === 'done'));
+  mcp.close();
+});
+
+await step('MCP: glasses_ask → question card → nod → "yes"', async () => {
+  const { seq } = await phone.check();
+  const mcp = startMcp();
+  await mcp.request('initialize', { protocolVersion: '2025-06-18' });
+  const pending = mcp.request('tools/call', { name: 'glasses_ask', arguments: { question: 'e2e: ship it?', timeout_seconds: 30 } });
+  const ask = await waitForAsk(seq, (item) => item.title === 'e2e: ship it?');
+  assert.equal(ask.kind, 'question');
+  await phone.answer(ask.id, 'allow', 'nod');
+  assert.equal((await pending).result.content[0].text, 'yes');
+  mcp.close();
+});
+
+await step('MCP: cancelling a glasses_ask withdraws the card', async () => {
+  const { seq } = await phone.check();
+  const mcp = startMcp();
+  await mcp.request('initialize', { protocolVersion: '2025-06-18' });
+  const pending = mcp.request('tools/call', { name: 'glasses_ask', arguments: { question: 'e2e: cancel me', timeout_seconds: 60 } });
+  await waitForAsk(seq, (item) => item.title === 'e2e: cancel me');
+  mcp.notify('notifications/cancelled', { requestId: 2 });
+  assert.match((await pending).result.content[0].text, /^no answer/);
+  const feed = await phone.feed(seq, 0);
+  assert.ok(!feed.pending.some((item) => item.title === 'e2e: cancel me'), 'card should be withdrawn');
+  mcp.close();
+});
+
 console.log('\nAll end-to-end checks passed.');

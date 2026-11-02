@@ -87,12 +87,14 @@ export class Hub {
     if (pending.length >= MAX_PENDING_ASKS) throw new HttpError(429, 'too many pending asks');
     const ttl = Math.min(Math.max(Number(input?.timeoutMs) || DEFAULT_ASK_TTL_MS, 5_000), MAX_ASK_TTL_MS);
     const risk = input?.risk === 'high' ? 'high' : 'normal';
+    const kind = input?.kind === 'question' ? 'question' : 'permission';
     const ask = {
       id: this.randomId(),
       seq: ++this.seq,
       createdAt: this.now(),
       expiresAt: this.now() + ttl,
       state: 'pending',
+      kind,
       risk,
       session: str(input?.session, 64, 'session'),
       project: str(input?.project, 60, 'project'),

@@ -81,15 +81,15 @@ function renderPhoneAsks() {
     const card = document.createElement('article');
     card.className = `ask ${ask.risk === 'high' ? 'high' : ''}`;
     const title = document.createElement('h3');
-    title.textContent = `${ask.risk === 'high' ? '⚠ ' : ''}${ask.title} · ${ask.project || 'claude'}`;
+    title.textContent = `${ask.risk === 'high' ? '⚠ ' : ''}${ask.kind === 'question' ? '? ' : ''}${ask.title} · ${ask.project || 'claude'}`;
     const detail = document.createElement('pre');
     detail.textContent = ask.detail;
     const allow = document.createElement('button');
-    allow.textContent = 'Allow';
+    allow.textContent = ask.kind === 'question' ? 'Yes' : 'Allow';
     allow.className = 'allow';
     allow.onclick = () => answer(ask.id, 'allow', 'phone');
     const deny = document.createElement('button');
-    deny.textContent = 'Deny';
+    deny.textContent = ask.kind === 'question' ? 'No' : 'Deny';
     deny.className = 'deny';
     deny.onclick = () => answer(ask.id, 'deny', 'phone');
     card.append(title, detail, allow, deny);

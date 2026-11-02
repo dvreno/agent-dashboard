@@ -120,3 +120,10 @@ test('diffScreen only returns changed objects', () => {
   const changed = diffScreen(first, second);
   assert.deepEqual(changed.map((item) => item.id), [3]);
 });
+
+test('question asks use yes/no wording on the HUD', () => {
+  const state = withAsks([ask('q', { kind: 'question', title: 'Merge PR #2 now?', detail: '' })]);
+  const [, body, footer] = buildScreen(state, T0);
+  assert.equal(body.text, 'Merge PR #2 now?');
+  assert.match(footer.text, /^NOD = yes {3}SHAKE = no/);
+});

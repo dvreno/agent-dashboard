@@ -134,3 +134,10 @@ test('resolved asks are purged after retention', () => {
   env.advance(11 * 60_000);
   assert.throws(() => hub.getAsk(ask.id), /not found/);
 });
+
+test('asks default to kind=permission and accept kind=question', () => {
+  const hub = new Hub(fakeEnv());
+  assert.equal(hub.createAsk({ title: 'x' }).kind, 'permission');
+  assert.equal(hub.createAsk({ title: 'y', kind: 'question' }).kind, 'question');
+  assert.equal(hub.createAsk({ title: 'z', kind: 'bogus' }).kind, 'permission');
+});
