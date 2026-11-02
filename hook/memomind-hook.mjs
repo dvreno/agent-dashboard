@@ -4,7 +4,7 @@
 //
 // Configuration (environment variables, e.g. via "env" in ~/.claude/settings.json):
 //   MEMOMIND_RELAY_URL       https://memomind-agent-relay.<you>.workers.dev  (required)
-//   MEMOMIND_RELAY_TOKEN     shared secret, same as the Worker's RELAY_TOKEN   (required)
+//   MEMOMIND_RELAY_TOKEN     shared secret (or put it in ~/.claude/memomind/relay-token, chmod 600)
 //   MEMOMIND_ASK_TIMEOUT     seconds to wait for a glasses answer (default 90)
 //   MEMOMIND_TIMEOUT_ACTION  "deny" (default) or "prompt" (fall back to the normal terminal prompt)
 //   MEMOMIND_DISABLED        set to 1 to turn the hook off without editing settings
@@ -13,10 +13,26 @@
 // unreachable or misconfigured it prints nothing, so Claude Code shows its
 // normal permission prompt. Status events never block Claude.
 
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { toAsk, toFeedEvent, permissionOutput } from './lib.mjs';
 
+// The token can come from MEMOMIND_RELAY_TOKEN, or (preferred, keeps it out of
+// settings.json) from a private file: MEMOMIND_RELAY_TOKEN_FILE, default
+// ~/.claude/memomind/relay-token.
+function readToken() {
+  if (process.env.MEMOMIND_RELAY_TOKEN) return process.env.MEMOMIND_RELAY_TOKEN.trim();
+  const file = process.env.MEMOMIND_RELAY_TOKEN_FILE || join(homedir(), '.claude', 'memomind', 'relay-token');
+  try {
+    return readFileSync(file, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
 const RELAY = (process.env.MEMOMIND_RELAY_URL || '').replace(/\/+$/, '');
-const TOKEN = process.env.MEMOMIND_RELAY_TOKEN || '';
+const TOKEN = readToken();
 const ASK_TIMEOUT_S = Math.min(Math.max(Number(process.env.MEMOMIND_ASK_TIMEOUT) || 90, 10), 590);
 const TIMEOUT_ACTION = process.env.MEMOMIND_TIMEOUT_ACTION === 'prompt' ? 'prompt' : 'deny';
 

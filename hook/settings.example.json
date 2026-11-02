@@ -1,7 +1,6 @@
 {
   "env": {
     "MEMOMIND_RELAY_URL": "https://memomind-agent-relay.YOUR-SUBDOMAIN.workers.dev",
-    "MEMOMIND_RELAY_TOKEN": "paste-the-same-token-you-gave-wrangler",
     "MEMOMIND_ASK_TIMEOUT": "90",
     "MEMOMIND_TIMEOUT_ACTION": "deny"
   },
@@ -10,30 +9,91 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "timeout": 600 }
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "timeout": 600
+          }
         ]
       }
     ],
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "async": true
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "timeout": 5 }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "async": true
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "async": true }] }
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "async": true
+          }
+        ]
+      }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "async": true
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "async": true
+          }
+        ]
+      }
     ],
     "SubagentStop": [
-      { "hooks": [{ "type": "command", "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"", "async": true }] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.claude/memomind/memomind-hook.mjs\"",
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }
