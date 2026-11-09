@@ -1,15 +1,19 @@
 // Agent Dashboard: shows Claude Code activity on the glasses and answers
 // permission requests with head gestures (nod = allow, shake = deny).
-// Runs in the MemoMind App WebView and draws through the existing web_bridge GMP.
+// Runs in the MemoMind App WebView. With the Agent Dashboard glasses plugin
+// (glasses/agent_hud) it sends history and cards over its own channel and the
+// glasses do the paging; with the stock web_bridge GMP it draws text boxes.
 
 import { createGMPlugin, opusRecordingToOgg } from './vendor/gm-plugin-web-sdk.esm.js';
 import { createRelayClient } from './relay-client.js';
+import { CH_UP, NativeLink } from './native-link.js';
 import {
   applyFeed, buildScreen, createState, diffScreen, dropAsk, focusedAsk, handleInput, MAX_RECORDING_MS,
 } from './screen.js';
 
 const STORAGE_KEY = 'agent-dashboard.settings';
 const FEED_WAIT_MS = 25_000;
+const NATIVE_DETECT_MS = 2500; // wait this long for the glasses plugin's HELLO
 
 const gm = createGMPlugin();
 const $ = (id) => document.getElementById(id);
@@ -28,6 +32,17 @@ let drawing = Promise.resolve();
 let capture = null;          // active glasses-mic recording session
 let playedClipId = '';       // last Claude speech clip played
 const speaker = new Audio(); // OS routes this (glasses speaker when connected via HFP)
+let mode = 'detecting';      // 'native' (agent_hud GMP) | 'bridge' (web_bridge GMP)
+let sending = Promise.resolve();
+const native = new NativeLink({
+  send: (channel, bytes) => {
+    // Keep Bluetooth messages in order; one failure must not stall the queue.
+    sending = sending.then(() => gm.plugin.sendMessage(channel, bytes)).catch((error) => {
+      log(`Glasses send failed: ${error.code || ''} ${error.message || error}`);
+    });
+  },
+  log: (message) => log(message),
+});
 
 function log(message) {
   const line = `${new Date().toLocaleTimeString()}  ${message}`;
@@ -47,6 +62,11 @@ function setConnection(value) {
 // ---- glasses rendering ------------------------------------------------------
 
 function draw(force = false) {
+  if (mode === 'native') {
+    native.sync(state, Date.now(), focusedAsk(state));
+    return drawing;
+  }
+  if (mode === 'detecting') return drawing;
   // Serialise draws so Bridge requests never interleave.
   drawing = drawing.then(async () => {
     if (closed) return;
@@ -144,6 +164,7 @@ async function startRecording(askId) {
     capture = await gm.audio.openRecording({ pickupMode: 'frontFocus', noiseReduction: true, maxDurationMs: MAX_RECORDING_MS });
     state.recording = { askId, startedAt: Date.now() };
     log('Recording reply…');
+    native.notice('Recording - click to send');
   } catch (error) {
     capture = null;
     log(`Mic unavailable: ${error.code || ''} ${error.message || error}`);
@@ -159,6 +180,7 @@ async function stopRecording() {
   capture = null;
   state.recording = null;
   state.sending = recording.askId;
+  native.notice('Sending your reply');
   draw();
   try {
     const result = await session.stop();
@@ -192,17 +214,22 @@ async function playSpeech() {
 // ---- relay --------------------------------------------------------------------
 
 async function answer(id, decision, via, extra) {
-  if (!client) return;
+  if (!client) return false;
+  let ok = false;
   try {
     await client.answer(id, decision, via, extra);
     log(`${decision.toUpperCase()} via ${via}`);
+    ok = true;
   } catch (error) {
     log(`Answer failed: ${error.message}`); // 409 = already answered/expired; the next feed corrects the view
   }
-  dropAsk(state, id, Date.now());
+  // On failure keep the card so it can be retried; the next feed drops it if it is gone.
+  if (ok) dropAsk(state, id, Date.now());
   renderPhoneAsks();
   draw();
+  return ok;
 }
+
 
 async function pollLoop() {
   let backoff = 1000;
@@ -212,6 +239,7 @@ async function pollLoop() {
       const feed = await client.feed(state.since, FEED_WAIT_MS, pollAbort.signal);
       const hadFocus = focusedAsk(state)?.id;
       applyFeed(state, feed, Date.now());
+      native.addEvents(feed.events, { showProject: state.sessions.size > 1 });
       setConnection('online');
       backoff = 1000;
       for (const event of feed.events) log(`${event.project || event.session}: ${event.title}${event.text ? ` — ${event.text}` : ''}`);
@@ -233,6 +261,7 @@ function startPolling() {
   pollAbort?.abort();
   state = createState();
   lastDrawn = [];
+  native.reset();
   setConnection('connecting');
   void pollLoop();
 }
@@ -269,6 +298,28 @@ ui.test.addEventListener('click', async () => {
   }
 });
 
+// ---- native glasses plugin ----------------------------------------------------------
+
+async function onGlassesMessage(message) {
+  if (message.channel !== CH_UP) return;
+  const { message: decoded, actions } = native.onMessage(message.data);
+  if (decoded.type === 'hello' && mode !== 'native') {
+    mode = 'native';
+    log('Using the Agent Dashboard glasses plugin');
+  }
+  for (const action of actions) {
+    if (action.type === 'resync') draw();
+    if (action.type !== 'answer') continue;
+    if (action.decision === 'talk') {
+      if (state.recording?.askId === action.id) void stopRecording();
+      else void startRecording(action.id);
+      continue;
+    }
+    const ok = await answer(action.id, action.decision, action.via);
+    native.ackAnswer(action.id, ok);
+  }
+}
+
 // ---- device input -------------------------------------------------------------
 
 function onInput(input) {
@@ -283,7 +334,8 @@ function onInput(input) {
 
 // Countdown refresh: only the footer text changes, and only while a card is shown.
 setInterval(() => {
-  if (focusedAsk(state) || state.armed) draw();
+  // Native mode diffs, so this only sends when the clock or a card changes.
+  if (mode === 'native' || focusedAsk(state) || state.armed) draw();
   // The SDK caps short recordings; send automatically at the limit.
   if (state.recording && Date.now() - state.recording.startedAt >= MAX_RECORDING_MS) void stopRecording();
 }, 1000);
@@ -300,7 +352,8 @@ async function start() {
     });
     gm.device.onConnection((event) => {
       log(event.connected ? 'Glasses connected' : 'Glasses disconnected');
-      if (event.connected) {
+      if (event.connected && mode === 'native') native.start();
+      if (event.connected && mode === 'bridge') {
         pageOpen = false;
         draw(true);
       }
@@ -309,6 +362,18 @@ async function start() {
       if (event.state === 'stopped' && capture) void stopRecording();
       if (event.state === 'error') log(`Mic error: ${event.errorCode || event.message || 'unknown'}`);
     });
+    try {
+      gm.plugin.onMessage((message) => void onGlassesMessage(message));
+      native.start();
+    } catch (error) {
+      log(`Glasses plugin channel unavailable: ${error.code || ''} ${error.message || error}`);
+    }
+    setTimeout(() => {
+      if (mode !== 'detecting') return;
+      mode = 'bridge';
+      log('No Agent Dashboard glasses plugin answered; using the web bridge');
+      draw(true);
+    }, NATIVE_DETECT_MS);
     gm.on('runtime.lifecycleChanged', (event) => log(`Lifecycle: ${event.state || JSON.stringify(event)}`));
 
     const saved = await loadSettings();

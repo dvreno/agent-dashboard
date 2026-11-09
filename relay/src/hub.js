@@ -3,6 +3,7 @@
 // and wrapped by a Cloudflare Durable Object in production.
 
 export const MAX_EVENTS = 100;
+const LONG_TEXT_KINDS = new Set(['done', 'error', 'status']);
 export const MAX_PENDING_ASKS = 20;
 export const MAX_WAIT_MS = 25_000;
 export const DEFAULT_ASK_TTL_MS = 120_000;
@@ -79,7 +80,8 @@ export class Hub {
       session: str(input.session, 64, 'session'),
       project: str(input.project, 60, 'project'),
       title: str(input.title, 80, 'title'),
-      text: str(input.text, 400, 'text'),
+      // Claude's final message is what the glasses scroll-back is for, so keep more of it.
+      text: str(input.text, LONG_TEXT_KINDS.has(kind) ? 4000 : 400, 'text'),
     };
     this.events.push(event);
     if (this.events.length > MAX_EVENTS) this.events.splice(0, this.events.length - MAX_EVENTS);

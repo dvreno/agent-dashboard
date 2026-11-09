@@ -13,10 +13,12 @@ Claude Code (MacBook)                Cloudflare Worker              MemoMind App
 | --- | --- | --- |
 | Relay | [`relay/`](relay/) | Cloudflare Workers (free plan), one Durable Object. Also serves the remote MCP connector for Claude Duet |
 | Hook | [`hook/memomind-hook.mjs`](hook/memomind-hook.mjs) | Your computer, called by Claude Code |
-| Phone plugin | [`phone/`](phone/) | MemoMind App WebView. Draws through the stock `web_bridge` glasses plugin, so there's no C code |
+| Phone plugin | [`phone/`](phone/) | MemoMind App WebView. Talks to the glasses plugin below, or falls back to the stock `web_bridge` GMP |
+| Glasses plugin | [`glasses/agent_hud/`](glasses/agent_hud/) | The glasses (`.gmp`, C). Paged reader with scroll-back, icons, ring support (phase 4) |
 
-Status: phases 1 (status feed) and 2 (approvals). Tested with unit tests, end-to-end tests
-against a local Worker, and the PhoneSDK Browser Studio. **Not yet tested on real glasses.**
+Status: phases 1–5 are built. Phase 4 (the glasses plugin) is tested with a native simulator that
+runs the real C code on a fake Host, and its `.gmp` builds with the official `build.py`.
+**Not yet run in Desktop Studio or on real glasses**: see [glasses/HARDWARE_TESTING.md](glasses/HARDWARE_TESTING.md).
 
 ## What you see
 
@@ -108,7 +110,8 @@ command that isn't allowlisted). The card appears on the glasses within about a 
 ```sh
 cd plugins/agent-dashboard
 MEMOMIND_SDK=/path/to/plugin-open-platform npm run setup   # vendor the Web SDK into phone/vendor/ (gitignored)
-npm test                                       # 31 unit tests (relay, hook, HUD logic)
+npm test                                       # 89 tests: relay, hook, HUD logic, render kit, and the
+                                               # glasses plugin in a native simulator (needs cc + GlassSDK headers)
 
 # local relay
 cd relay && echo 'RELAY_TOKEN=local-dev-token-0123456789abcdef' > .dev.vars && npx wrangler dev
@@ -140,6 +143,68 @@ All routes except `/health` need `Authorization: Bearer <RELAY_TOKEN>`.
 | POST | `/v1/asks/:id/cancel` | hook | withdraw an ask (hook timed out) |
 | POST | `/v1/asks/:id/answer` | phone | `{decision: allow\|deny, via}`. 409 if already resolved |
 | GET | `/v1/feed?since=seq&wait=ms` | phone | long-poll for new events and the current pending asks |
+
+## Paged reader on the glasses (phase 4)
+
+Terminal Mode's main complaints in the MemoMind Discord are that text moves too fast and that you
+can't scroll back. Phase 4 adds a native glasses plugin that keeps the scroll-back **on the
+glasses**. The phone sends each line once, and paging costs no Bluetooth.
+
+```
+ Claude · web - working                        14:05
+┌ Approve? Run command: npm run build ──────────────┐   ← what the agent is waiting for
+ > Fix the flaky login test and run the suite
+ * Read: src/login.test.js
+ * Bash: npm test -- login
+ + Finished
+   The test waited for a fixed 200 ms. I replaced it  ← long replies wrap and keep paragraphs
+   with waitFor on the redirect …
+ ─────────────────────────────────────────────────────
+ 37 lines back   5 new                double-click: live
+```
+
+| Input | Reading | On an approval card |
+| --- | --- | --- |
+| Click | Page back | Confirm an armed high-risk approval / talk on a voice card |
+| Double click | Back to live | Next card |
+| Nod / shake | – | Allow (or arm, if high risk) / deny |
+| Head left / right | Page back / forward (can be turned off) | Scroll the card's detail |
+| Ring wheel, up/down keys | One line | Scroll the card's detail |
+| Ring page keys, swipes, media prev/next | One page | Scroll the card's detail |
+| Ring back / mouse right | Back to live | Hide the card to read what led up to it (click returns) |
+
+The phone plugin detects the glasses plugin automatically (HELLO on channel `0x4145`). If none
+answers within 2.5 s, it falls back to the phase 1–3 text screens through the stock web bridge.
+
+Two parts are written as standalone libraries so they can be published separately:
+
+- [`glasses/lib/hud_render/`](glasses/lib/hud_render/) + [`phone/lib/hud-render-kit.js`](phone/lib/hud-render-kit.js):
+  LVGL text/shape helpers that skip unchanged text; green-channel GRAY_4 (4 bits, 2 px/byte); LZ4;
+  only changed tiles; assets (the icons) sent over Bluetooth after launch instead of linked into Flash.
+- [`glasses/lib/hud_input/`](glasses/lib/hud_input/): one API for the glasses button, head gestures,
+  cooked HOGP navigation and raw HOGP events (keys, wheel, swipes, media keys), with a keymap the
+  phone can change at runtime.
+
+The protocol is in [`glasses/agent_hud/agent_proto.h`](glasses/agent_hud/agent_proto.h) (C) and
+[`phone/native-link.js`](phone/native-link.js) (JS). The `.gmp` is about 16 KB of the 500 KiB Flash limit.
+
+Claude's final message is now kept up to 4000 characters, with line breaks, so the scroll-back has
+something to scroll (the hook used to cut it at 200).
+
+### Build and run
+
+```sh
+cd plugins/agent-dashboard
+export MEMOMIND_SDK=~/MemoMind/plugin-open-platform
+python3 -m pip install PyNaCl                # build.py needs it for the review sidecars
+npm run build:glasses                       # → dist/agent_hud.gmp + .review.json + .review-source.enc
+npm run package                             # → dist/agent-dashboard-0.3.0.mmpkg
+```
+
+In Desktop Studio, use **Import package** for both files (keep `dist/manifest.json` beside the
+`.gmp`), start them, and enter the relay URL and token on the phone page. To install on the glasses,
+scan Studio's QR code from App › Settings › Memo Lab › Developer Workspace.
+[glasses/HARDWARE_TESTING.md](glasses/HARDWARE_TESTING.md) has the full checklist.
 
 ## Voice conversations (phase 5)
 
@@ -262,7 +327,8 @@ RELAY_TOKEN=… MCP_SECRET=… node test/duet-connector-e2e.mjs
 1. **Foreground only.** The MemoMind App must be open with the plugin running. We don't yet know whether
    it keeps polling with the phone locked. This is the first thing to test on device.
 2. Gesture thresholds and firmware text wrapping differ from the simulator. Tune `SETTLE_MS` and the
-   layout in [`phone/screen.js`](phone/screen.js).
+   layout in [`phone/screen.js`](phone/screen.js) (web bridge) or
+   [`glasses/agent_hud/agent_hud.c`](glasses/agent_hud/agent_hud.c) (native).
 3. Long-press is avoided on purpose, because it exits plugins.
 4. One relay = one user. The relay isn't designed for sharing between people.
 5. If this is ever submitted for MemoMind review/distribution, their terms (§8.5) require disclosing any
@@ -271,5 +337,5 @@ RELAY_TOKEN=… MCP_SECRET=… node test/duet-connector-e2e.mjs
 ## Roadmap
 
 - ~~Phase 3: MCP server~~ done: `glasses_notify`, `glasses_ask`, `glasses_converse` (see `hook/memomind-mcp.mjs`).
-- Phase 4: custom `.gmp` with icons, history scrolling and ring support.
+- ~~Phase 4: custom `.gmp`~~ built: paged reader, icons, ring support (see above). Needs a Studio and hardware pass.
 - ~~Phase 5: voice replies~~ done (see Voice conversations above).

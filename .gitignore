@@ -3,3 +3,5 @@ dist/
 relay/.dev.vars
 relay/.wrangler/
 phone/vendor/
+glasses/agent_hud/.build/
+test/native/.build/

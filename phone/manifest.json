@@ -1,7 +1,7 @@
 {
   "id": "com.dvreno.agent-dashboard",
   "name": "Agent Dashboard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "entry": "index.html",
   "bridgeVersion": "2.0",
   "schemaVersion": 2,
@@ -30,6 +30,17 @@
       }
     },
     {
+      "name": "device.messaging",
+      "required": false,
+      "reason": "Talk to the Agent Dashboard glasses plugin (history, approval cards, icons)",
+      "scope": {
+        "channels": [
+          16708,
+          16709
+        ]
+      }
+    },
+    {
       "name": "network",
       "required": true,
       "reason": "Connect to your own Claude Code relay"
@@ -46,14 +57,10 @@
     }
   ],
   "deviceRequirements": {
-    "preferredPluginId": "com.gm.example.web-bridge",
+    "preferredPluginId": "com.dvreno.agent-dashboard",
     "protocols": [
       {
-        "id": "gm.scene",
-        "minVersion": "1.0"
-      },
-      {
-        "id": "gm.device-events",
+        "id": "dvreno.agent-hud",
         "minVersion": "1.0"
       }
     ]

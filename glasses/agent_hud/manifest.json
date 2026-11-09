@@ -1,0 +1,11 @@
+{
+  "id": "com.dvreno.agent-dashboard",
+  "name": "Agent Dashboard",
+  "version": 1,
+  "abi_version": 256,
+  "provides": {
+    "protocols": [
+      { "id": "dvreno.agent-hud", "version": "1.0" }
+    ]
+  }
+}

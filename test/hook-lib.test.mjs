@@ -60,3 +60,12 @@ test('permissionOutput matches the Claude Code contract', () => {
   assert.deepEqual(permissionOutput('allow'), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
   assert.deepEqual(permissionOutput('deny', 'no'), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: 'no' } } });
 });
+
+test('final messages keep their paragraphs for the glasses scroll-back', async () => {
+  const { toFeedEvent, truncateLines } = await import('../hook/lib.mjs');
+  assert.equal(truncateLines('a  b\n\n\n\nc\t d\r\n', 100), 'a b\n\nc d');
+  const event = toFeedEvent({ hook_event_name: 'Stop', session_id: 'abcdef123', cwd: '/x/web', last_assistant_message: `Done.\n\n${'z'.repeat(5000)}` });
+  assert.equal(event.kind, 'done');
+  assert.ok(event.text.startsWith('Done.\n\n'));
+  assert.equal(event.text.length, 4000);
+});

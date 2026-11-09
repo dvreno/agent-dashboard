@@ -36,6 +36,8 @@ test('event validation rejects unknown kinds and truncates long text', () => {
   assert.throws(() => hub.addEvent({}), /kind is required/);
   const event = hub.addEvent({ kind: 'notify', text: 'x'.repeat(1000) });
   assert.equal(event.text.length, 400);
+  const done = hub.addEvent({ kind: 'done', text: 'y'.repeat(9000) });
+  assert.equal(done.text.length, 4000, 'final messages keep enough for scroll-back');
 });
 
 test('ask lifecycle: pending → allow, waiters resolve, second answer conflicts', async () => {

@@ -24,6 +24,19 @@ export function truncate(text, max) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
+// Like truncate(), but keeps line breaks (at most one blank line in a row), so
+// long replies stay readable when paged on the glasses.
+export function truncateLines(text, max) {
+  const value = String(text ?? '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
 // Commands that need a two-step confirmation (nod, then button) on the glasses.
 const HIGH_RISK_BASH = [
   /\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)+/,         // rm -rf, rm -f, rm -r
@@ -112,9 +125,9 @@ export function toFeedEvent(input) {
       if (input.notification_type === 'permission_prompt') return null; // covered by PermissionRequest
       return { ...base, kind: 'notify', title: input.title || 'Claude needs you', text: truncate(redact(input.message), 200) };
     case 'Stop':
-      return { ...base, kind: 'done', title: 'Finished', text: truncate(redact(input.last_assistant_message), 200) };
+      return { ...base, kind: 'done', title: 'Finished', text: truncateLines(redact(input.last_assistant_message), 4000) };
     case 'SubagentStop':
-      return { ...base, kind: 'status', title: `Subagent done${input.agent_type ? `: ${input.agent_type}` : ''}`, text: truncate(redact(input.last_assistant_message), 160) };
+      return { ...base, kind: 'status', title: `Subagent done${input.agent_type ? `: ${input.agent_type}` : ''}`, text: truncateLines(redact(input.last_assistant_message), 1000) };
     default:
       return null;
   }
