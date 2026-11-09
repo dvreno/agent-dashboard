@@ -12,8 +12,13 @@
 //   GET  /v1/feed?since=seq&wait=ms phone → long-poll for new events + pending asks
 //   POST /v1/clips                  either → raw audio body (≤1.5 MB) → { clip: { id, type, size } }
 //   GET  /v1/clips/:id              either → the audio bytes (kept 15 minutes)
+//
+// Remote MCP connector (for Claude Duet / Claude apps custom connectors):
+//   POST /mcp/<MCP_SECRET>          JSON-RPC over Streamable HTTP (JSON responses)
+//   The secret in the path is the credential; it is separate from RELAY_TOKEN.
 
 import { CLIP_TTL_MS, Hub, HttpError, MAX_CLIP_BYTES } from './hub.js';
+import { createMcpHandler } from './mcp.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -48,6 +53,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
     if (url.pathname === '/health') return json(200, { ok: true });
+    if (url.pathname.startsWith('/mcp/')) return handleMcp(request, env, url);
     if (!url.pathname.startsWith('/v1/')) return json(404, { error: 'not found' });
 
     if (!env.RELAY_TOKEN || env.RELAY_TOKEN.length < 24) {
@@ -61,6 +67,57 @@ export default {
     return stub.fetch(request);
   },
 };
+
+// ---- remote MCP connector ---------------------------------------------------
+
+function hubStub(env) {
+  return env.HUB.get(env.HUB.idFromName('default'));
+}
+
+// Minimal client for calling the Durable Object from inside the Worker.
+export function createHubClient(stub) {
+  async function call(method, path, body) {
+    const response = await stub.fetch(new Request(`https://hub${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    }));
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.error || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+  return {
+    postEvent: (event) => call('POST', '/v1/events', event),
+    createAsk: (ask) => call('POST', '/v1/asks', ask),
+    waitAsk: (id, waitMs) => call('GET', `/v1/asks/${encodeURIComponent(id)}?wait=${waitMs}`),
+  };
+}
+
+async function handleMcp(request, env, url) {
+  if (!env.MCP_SECRET || env.MCP_SECRET.length < 24) {
+    return json(404, { error: 'not found' }); // connector disabled until MCP_SECRET is set
+  }
+  const presented = url.pathname.slice('/mcp/'.length).replace(/\/+$/, '');
+  if (!(await tokenMatches(presented, env.MCP_SECRET))) return json(404, { error: 'not found' });
+  if (request.method === 'GET') return new Response(null, { status: 405, headers: { Allow: 'POST', ...CORS } }); // no SSE stream
+  if (request.method === 'DELETE') return new Response(null, { status: 204, headers: CORS }); // stateless: nothing to end
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers: { Allow: 'POST', ...CORS } });
+
+  let message;
+  try {
+    message = await readJson(request);
+  } catch {
+    return json(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+  }
+  const handler = createMcpHandler({ hub: createHubClient(hubStub(env)), source: 'duet', project: 'Claude' });
+  const response = await handler.handle(message);
+  if (!response) return new Response(null, { status: 202, headers: CORS });
+  return json(200, response);
+}
 
 export class HubObject {
   constructor(state) {

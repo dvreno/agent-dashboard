@@ -11,7 +11,7 @@ Claude Code (MacBook)                Cloudflare Worker              MemoMind App
 
 | Part | Path | Runs on |
 | --- | --- | --- |
-| Relay | [`relay/`](relay/) | Cloudflare Workers (free plan), one Durable Object |
+| Relay | [`relay/`](relay/) | Cloudflare Workers (free plan), one Durable Object. Also serves the remote MCP connector for Claude Duet |
 | Hook | [`hook/memomind-hook.mjs`](hook/memomind-hook.mjs) | Your computer, called by Claude Code |
 | Phone plugin | [`phone/`](phone/) | MemoMind App WebView. Draws through the stock `web_bridge` glasses plugin, so there's no C code |
 
@@ -210,6 +210,52 @@ and macOS `say`, which plays the user's voice).
 **Unverified until real glasses:** whether the phone routes Claude's audio to the glasses speaker
 (the SDK has no speaker-routing API; captions always work), mic quality outdoors, and whether
 recording works with the phone locked.
+
+## Claude Duet and the Claude apps (remote connector)
+
+[Claude Duet](https://techcrunch.com/2026/10/22/claude-duet-app-is-anthropics-bet-on-agents/) is
+Anthropic's proactive agent app. It has no public API, but it uses the same connectors as your Claude
+account. The relay therefore also works as a **remote MCP server**: add it to Claude as a custom
+connector, and Duet (or Claude on the web and mobile) can put its check-ins on your HUD and ask you
+yes/no questions that you answer with a nod or a shake.
+
+| Tool | What it does |
+| --- | --- |
+| `glasses_notify` | Shows a short message on the HUD (title, optional detail, info/done/error) |
+| `glasses_ask` | Shows a yes/no question card. Waits up to about 40 s, then returns `yes`, `no`, `no answer`, or `pending` with an `ask_id` |
+| `glasses_get_answer` | Keeps waiting on a pending question. Questions stay on the glasses for 5 minutes by default (10 max) |
+
+Cards from Duet are labelled `Claude · duet`. Silence never counts as yes. A glasses answer is an
+extra signal for the agent: **it doesn't replace Duet's own confirmation before it sends, pays,
+signs or deletes**, which still happens in the Duet app.
+
+### Setup
+
+1. Give the connector its own secret and redeploy the relay:
+   ```sh
+   cd plugins/agent-dashboard/relay
+   openssl rand -hex 24                 # copy this; it becomes part of the connector URL
+   npx wrangler secret put MCP_SECRET   # paste it
+   npx wrangler deploy
+   ```
+   The connector stays switched off (404) until `MCP_SECRET` is set.
+2. In Claude (claude.ai → **Settings → Connectors → Add custom connector**), name it *MemoMind glasses*
+   and use the URL `https://memomind-agent-relay.<you>.workers.dev/mcp/<MCP_SECRET>`. Leave OAuth empty.
+3. Open Duet and check that *MemoMind glasses* appears among its connected apps. Then tell it how you
+   want it used, for example:
+   > When something needs my attention, also send a one-line summary to my glasses with glasses_notify.
+   > For quick yes/no decisions, ask me on my glasses first.
+4. Keep the Agent Dashboard plugin running on your phone so the cards reach the glasses.
+
+**The URL is the password.** Anyone who has it can show messages on your glasses and ask you
+questions, but can't read your feed or answer anything. To revoke it, run `wrangler secret put
+MCP_SECRET` again with a new value and update the connector.
+
+Test locally:
+```sh
+# relay/.dev.vars needs RELAY_TOKEN=… and MCP_SECRET=… (24+ characters each)
+RELAY_TOKEN=… MCP_SECRET=… node test/duet-connector-e2e.mjs
+```
 
 ## Known limits / to verify on hardware
 
