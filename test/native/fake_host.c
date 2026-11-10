@@ -131,7 +131,17 @@ static void arc_set_range(gm_plugin_lvgl_obj_t *o, int16_t a, int16_t b) { (void
 static void arc_set_value(gm_plugin_lvgl_obj_t *o, int16_t v) { (void)o; (void)v; }
 static gm_plugin_lvgl_obj_t *line_create(gm_plugin_lvgl_obj_t *p) { return create(p, FAKE_OBJ); }
 static void line_set_points(gm_plugin_lvgl_obj_t *o, const gm_plugin_lvgl_point_t *p, uint16_t n) { (void)o; (void)p; (void)n; }
-static gm_plugin_lvgl_coord_t font_line_height(const gm_plugin_lvgl_font_t *f) { (void)f; return FAKE_LINE_H; }
+/* FAKE_LINE_H (env) overrides the default font height, to test layouts with tall fonts. */
+static gm_plugin_lvgl_coord_t fake_line_h(void)
+{
+    const char *env = getenv("FAKE_LINE_H");
+    int v = env != NULL ? atoi(env) : 0;
+    return (gm_plugin_lvgl_coord_t)(v >= 8 && v <= 60 ? v : FAKE_LINE_H);
+}
+static gm_plugin_lvgl_coord_t font_line_height(const gm_plugin_lvgl_font_t *f)
+{
+    return (gm_plugin_lvgl_coord_t)(fake_line_h() + (f == (const gm_plugin_lvgl_font_t *)&s_font_large ? 8 : 0));
+}
 
 static int cp_len(const char *p)
 {
@@ -169,7 +179,7 @@ static void text_size(gm_plugin_lvgl_point_t *s, const char *t, const gm_plugin_
 {
     (void)f; (void)a; (void)b; (void)m; (void)fl;
     s->x = (gm_plugin_lvgl_coord_t)(strlen(t) * FAKE_CHAR_W);
-    s->y = FAKE_LINE_H;
+    s->y = fake_line_h();
 }
 static void sel(gm_plugin_lvgl_obj_t *o, uint32_t i) { (void)o; (void)i; }
 

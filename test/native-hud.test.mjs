@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   CMD, CH_UP, decodeUp, encodeConfig, encodeEntries, encodeStatus,
-  NativeLink, wrap,
+  NativeLink, STATE, wrap,
 } from '../phone/native-link.js';
 import { encodeFbTile, encodeTilePayload, packGray4 } from '../phone/lib/hud-render-kit.js';
 import { buildNativeSim } from '../scripts/build-native-sim.mjs';
@@ -379,3 +379,23 @@ test('framebuffer tiles from the phone kit decode with the reference LZ4', { ski
 });
 
 after(() => GlassesSim.killAll());
+
+test('layout follows the font height: a tall font never overlaps rows', { skip }, async () => {
+  for (const fontH of [17, 30]) {
+    const sim = new GlassesSim(exe, { env: { FAKE_LINE_H: String(fontH) } });
+    await sim.cmd('start');
+    await sim.sent();
+    await sim.down(encodeEntries(1, Array.from({ length: 30 }, (_, i) => ({ kind: 1, text: `line ${i}` }))));
+    await sim.down(encodeStatus({ state: STATE.waiting, sessions: 1, left: 'Claude', right: '11:45', waiting: 'Approve? Run command: npm run build' }));
+    await sim.cmd('time 60');
+    const labels = (await sim.screen()).filter((i) => i.type === 'label' && i.text.trim() !== '');
+    const rows = [...new Set(labels.map((l) => l.y))].sort((a, b) => a - b);
+    for (let i = 1; i < rows.length; i += 1) {
+      assert.ok(rows[i] - rows[i - 1] >= fontH, `font ${fontH}: rows at y=${rows[i - 1]} and y=${rows[i]} overlap`);
+    }
+    assert.ok(rows.at(-1) + fontH <= 350, `font ${fontH}: footer fits on screen`);
+    assert.ok(labels.some((l) => /Approve\? Run command/.test(l.text)), 'waiting bar visible');
+    assert.ok(labels.some((l) => /line 29/.test(l.text)), 'newest line visible');
+    await sim.close();
+  }
+});

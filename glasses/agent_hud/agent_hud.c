@@ -25,12 +25,17 @@
 
 #define SCREEN_W 600
 #define MARGIN 12
-#define HEADER_Y 4
-#define WAIT_Y 30
-#define WAIT_H 26
-#define BODY_TOP 62
-#define BODY_BOTTOM 320
-#define FOOTER_Y 326
+#define SCREEN_H 350
+/* Vertical layout follows the firmware font (see layout()); these read it. */
+#define HEADER_Y (s_app.lay.head_y)
+#define HEAD_H (s_app.lay.head_h)
+#define WAIT_Y (s_app.lay.wait_y)
+#define WAIT_H (s_app.lay.wait_h)
+#define BODY_TOP (s_app.lay.body_top)
+#define BODY_BOTTOM (s_app.lay.body_bottom)
+#define FOOTER_Y (s_app.lay.foot_y)
+#define FOOT_H (s_app.lay.foot_h)
+#define HEAD_RIGHT_W 110
 #define ICON_SIZE 16
 #define TEXT_X (MARGIN + ICON_SIZE + 8)
 #define TEXT_W (SCREEN_W - TEXT_X - MARGIN - 8)
@@ -128,6 +133,11 @@ typedef struct {
     uint32_t unread;
     int16_t line_h;
     uint8_t visible_rows;
+    uint8_t card_rows_n;        /* detail lines that fit on the card */
+    struct {
+        int16_t font_h, large_h;
+        int16_t head_y, head_h, wait_y, wait_h, body_top, body_bottom, foot_y, foot_h;
+    } lay;
     uint8_t head_paging;        /* head left/right pages the history */
 
     /* misc */
@@ -510,8 +520,8 @@ static void on_action(void *context, uint8_t action, const hi_event_t *ev)
             return;
         case A_LINE_UP: card_scroll(-1); return;
         case A_LINE_DOWN: card_scroll(1); return;
-        case A_PAGE_UP: card_scroll(-(CARD_ROWS - 1)); return;
-        case A_PAGE_DOWN: card_scroll(CARD_ROWS - 1); return;
+        case A_PAGE_UP: card_scroll(-((int32_t)s_app.card_rows_n - 1)); return;
+        case A_PAGE_DOWN: card_scroll((int32_t)s_app.card_rows_n - 1); return;
         default: return;
         }
     }
@@ -744,6 +754,30 @@ static void on_message(const uint8_t *data, uint32_t len)
     }
 }
 
+/* ---- layout ----------------------------------------------------------------------- */
+
+/* Place header, waiting bar, body and footer from the firmware's real font heights,
+ * so a taller font moves things down instead of overlapping (Studio's font is far
+ * taller than the 17 px the first layout assumed). */
+static void layout(void)
+{
+    int16_t fh = (int16_t)s_app.r.ui->font_get_line_height(s_app.r.ui->font_default);
+    int16_t fl = (int16_t)s_app.r.ui->font_get_line_height(s_app.r.ui->font_large);
+    if (fh < 10 || fh > 60) fh = 17;
+    if (fl < fh || fl > 90) fl = (int16_t)(fh + 6);
+    s_app.lay.font_h = fh;
+    s_app.lay.large_h = fl;
+    s_app.line_h = (int16_t)(fh + 3);
+    s_app.lay.head_y = 4;
+    s_app.lay.head_h = (int16_t)(fh + 4);
+    s_app.lay.wait_y = (int16_t)(s_app.lay.head_y + s_app.lay.head_h + 4);
+    s_app.lay.wait_h = (int16_t)(fh + 9);
+    s_app.lay.body_top = (int16_t)(s_app.lay.wait_y + s_app.lay.wait_h + 6);
+    s_app.lay.foot_h = (int16_t)(fh + 4);
+    s_app.lay.foot_y = (int16_t)(SCREEN_H - s_app.lay.foot_h - 3);
+    s_app.lay.body_bottom = (int16_t)(s_app.lay.foot_y - 6);
+}
+
 /* ---- drawing ----------------------------------------------------------------------- */
 
 static uint32_t wrap_line(void *context, const char *utf8)
@@ -865,7 +899,7 @@ static void draw_card(ask_t *a)
     const char *p = a->detail;
     uint32_t line = 0U, shown = 0U;
     uint32_t left;
-    while (*p != '\0' && shown < CARD_ROWS) {
+    while (*p != '\0' && shown < s_app.card_rows_n) {
         gm_plugin_lvgl_coord_t used = 0;
         uint32_t take = ui->text_get_next_line(p, ui->font_default, 0, SCREEN_W - 2 * MARGIN - 24,
                                                &used, GM_PLUGIN_LVGL_TEXT_FLAG_NONE);
@@ -972,7 +1006,7 @@ static void draw(void)
              s_app.state == STATE_WORKING ? ICON_WORKING :
              s_app.state == STATE_WAITING ? ICON_WAITING :
              s_app.state == STATE_ERROR ? KIND_ERROR : ICON_IDLE,
-             MARGIN, HEADER_Y + 2);
+             MARGIN, (int16_t)(HEADER_Y + (HEAD_H - ICON_SIZE) / 2));
     if (s_app.phone_seen == 0U) {
         hr_cell_set(&s_app.r, &s_app.head_left, "Agent Dashboard - open the phone plugin");
     } else if (s_app.head_left_text[0] != '\0') {
@@ -1030,8 +1064,7 @@ static bool build_ui(void)
     s_app.r.ui->style_set(root, GM_PLUGIN_LVGL_STYLE_BG_OPA,
                           gm_plugin_lvgl_style_number(GM_PLUGIN_LVGL_OPA_COVER),
                           GM_PLUGIN_LVGL_SELECTOR_MAIN);
-    s_app.line_h = (int16_t)(s_app.r.ui->font_get_line_height(s_app.r.ui->font_default) + 3);
-    if (s_app.line_h < 12) s_app.line_h = 20;
+    layout();
     s_app.visible_rows = (uint8_t)((BODY_BOTTOM - BODY_TOP) / s_app.line_h);
     if (s_app.visible_rows > MAX_ROWS) s_app.visible_rows = MAX_ROWS;
     if (s_app.visible_rows < 3U) s_app.visible_rows = 3U;
@@ -1040,15 +1073,19 @@ static bool build_ui(void)
     st.mode = GM_PLUGIN_LVGL_LABEL_DOT;
     st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_LEFT;
     st.grey = 15U;
-    st.x = TEXT_X; st.y = HEADER_Y; st.w = 380; st.h = 22;
+    st.x = TEXT_X; st.y = HEADER_Y; st.h = HEAD_H;
+    st.w = (int16_t)(SCREEN_W - MARGIN - HEAD_RIGHT_W - 8 - TEXT_X);
     if (!hr_cell_init(&s_app.r, &s_app.head_left, root, &st)) return false;
-    st.x = 420; st.w = SCREEN_W - 420 - MARGIN; st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_RIGHT; st.grey = 10U;
+    st.x = SCREEN_W - MARGIN - HEAD_RIGHT_W; st.w = HEAD_RIGHT_W;
+    st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_RIGHT; st.grey = 10U;
     if (!hr_cell_init(&s_app.r, &s_app.head_right, root, &st)) return false;
-    if (hr_hline(&s_app.r, root, MARGIN, 27, SCREEN_W - 2 * MARGIN, 1, 4) == 0) return false;
+    if (hr_hline(&s_app.r, root, MARGIN, (int16_t)(HEADER_Y + HEAD_H + 1), SCREEN_W - 2 * MARGIN, 1, 4) == 0)
+        return false;
 
     s_app.wait_box = hr_box(&s_app.r, root, MARGIN, WAIT_Y, SCREEN_W - 2 * MARGIN, WAIT_H, 3, 12, 1, 4);
     if (s_app.wait_box == 0) return false;
-    st.x = 8; st.y = 3; st.w = SCREEN_W - 2 * MARGIN - 16; st.h = 20;
+    st.x = 8; st.y = (int16_t)((WAIT_H - s_app.lay.font_h) / 2 - 1);
+    st.w = SCREEN_W - 2 * MARGIN - 16; st.h = (int16_t)(s_app.lay.font_h + 2);
     st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_LEFT; st.grey = 15U;
     if (!hr_cell_init(&s_app.r, &s_app.wait_text, s_app.wait_box, &st)) return false;
 
@@ -1067,7 +1104,7 @@ static bool build_ui(void)
 
     if (hr_hline(&s_app.r, root, MARGIN, FOOTER_Y - 3, SCREEN_W - 2 * MARGIN, 1, 4) == 0) return false;
     st.mode = GM_PLUGIN_LVGL_LABEL_DOT;
-    st.x = MARGIN; st.y = FOOTER_Y; st.w = 300; st.h = 22; st.grey = 11U;
+    st.x = MARGIN; st.y = FOOTER_Y; st.w = 300; st.h = FOOT_H; st.grey = 11U;
     if (!hr_cell_init(&s_app.r, &s_app.foot_left, root, &st)) return false;
     st.x = 312; st.w = SCREEN_W - 312 - MARGIN; st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_RIGHT; st.grey = 7U;
     if (!hr_cell_init(&s_app.r, &s_app.foot_right, root, &st)) return false;
@@ -1078,28 +1115,37 @@ static bool build_ui(void)
     if (s_app.card == 0) return false;
     st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_LEFT;
     st.font = HR_FONT_LARGE; st.grey = 15U;
-    st.x = 12; st.y = 8; st.w = SCREEN_W - 2 * MARGIN - 110; st.h = 26;
-    if (!hr_cell_init(&s_app.r, &s_app.card_title, s_app.card, &st)) return false;
-    st.font = HR_FONT_DEFAULT; st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_RIGHT; st.grey = 10U;
-    st.x = SCREEN_W - 2 * MARGIN - 100; st.w = 88; st.h = 22;
-    if (!hr_cell_init(&s_app.r, &s_app.card_count, s_app.card, &st)) return false;
-    st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_LEFT; st.grey = 9U;
-    st.x = 12; st.y = 36; st.w = SCREEN_W - 2 * MARGIN - 24; st.h = 22;
-    if (!hr_cell_init(&s_app.r, &s_app.card_meta, s_app.card, &st)) return false;
-    st.mode = GM_PLUGIN_LVGL_LABEL_CLIP; st.grey = 13U;
-    for (i = 0; i < CARD_ROWS; ++i) {
-        st.y = (int16_t)(62 + (int32_t)i * (s_app.line_h > 22 ? 22 : s_app.line_h));
-        st.h = s_app.line_h;
-        if (!hr_cell_init(&s_app.r, &s_app.card_rows[i], s_app.card, &st)) return false;
+    {
+        /* Title (large font), then project, detail rows and the hint, all from font heights. */
+        int16_t fh = s_app.lay.font_h, card_h = (int16_t)(BODY_BOTTOM - BODY_TOP);
+        int16_t meta_y = (int16_t)(6 + s_app.lay.large_h + 2);
+        int16_t rows_y = (int16_t)(meta_y + fh + 6);
+        int16_t hint_y = (int16_t)(card_h - fh - 10);
+        int32_t fit = (hint_y - 4 - rows_y) / s_app.line_h;
+        s_app.card_rows_n = (uint8_t)(fit < 1 ? 1 : fit > CARD_ROWS ? CARD_ROWS : fit);
+        st.x = 12; st.y = 6; st.w = SCREEN_W - 2 * MARGIN - 110; st.h = (int16_t)(s_app.lay.large_h + 2);
+        if (!hr_cell_init(&s_app.r, &s_app.card_title, s_app.card, &st)) return false;
+        st.font = HR_FONT_DEFAULT; st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_RIGHT; st.grey = 10U;
+        st.x = SCREEN_W - 2 * MARGIN - 100; st.w = 88; st.h = (int16_t)(fh + 2);
+        if (!hr_cell_init(&s_app.r, &s_app.card_count, s_app.card, &st)) return false;
+        st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_LEFT; st.grey = 9U;
+        st.x = 12; st.y = meta_y; st.w = SCREEN_W - 2 * MARGIN - 24; st.h = (int16_t)(fh + 2);
+        if (!hr_cell_init(&s_app.r, &s_app.card_meta, s_app.card, &st)) return false;
+        st.mode = GM_PLUGIN_LVGL_LABEL_CLIP; st.grey = 13U;
+        for (i = 0; i < CARD_ROWS; ++i) {
+            st.y = (int16_t)(rows_y + (int32_t)(i < s_app.card_rows_n ? i : s_app.card_rows_n - 1U) * s_app.line_h);
+            st.h = s_app.line_h;
+            if (!hr_cell_init(&s_app.r, &s_app.card_rows[i], s_app.card, &st)) return false;
+        }
+        st.mode = GM_PLUGIN_LVGL_LABEL_DOT; st.grey = 15U;
+        st.y = hint_y; st.h = (int16_t)(fh + 2);
     }
-    st.mode = GM_PLUGIN_LVGL_LABEL_DOT; st.grey = 15U;
-    st.y = BODY_BOTTOM - BODY_TOP - 30; st.h = 22;
     if (!hr_cell_init(&s_app.r, &s_app.card_hint, s_app.card, &st)) return false;
     hr_show(&s_app.r, s_app.card, false);
 
     /* toast sits over the footer centre */
     st.align = GM_PLUGIN_LVGL_TEXT_ALIGN_CENTER; st.grey = 15U;
-    st.x = 150; st.y = FOOTER_Y; st.w = 300; st.h = 22;
+    st.x = 150; st.y = FOOTER_Y; st.w = 300; st.h = FOOT_H;
     if (!hr_cell_init(&s_app.r, &s_app.toast, root, &st)) return false;
     return true;
 }

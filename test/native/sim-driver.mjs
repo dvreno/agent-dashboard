@@ -12,8 +12,8 @@ export class GlassesSim {
     GlassesSim.all.clear();
   }
 
-  constructor(exe) {
-    this.proc = spawn(exe, [], { stdio: ['pipe', 'pipe', 'inherit'] });
+  constructor(exe, { env = {} } = {}) {
+    this.proc = spawn(exe, [], { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...env } });
     GlassesSim.all.add(this);
     this.buffer = '';
     this.waiters = [];
