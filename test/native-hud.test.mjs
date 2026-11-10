@@ -1,6 +1,6 @@
 // The phone side (phone/native-link.js) drives the real glasses plugin
 // (glasses/agent_hud, compiled for this computer against a fake Host).
-// Needs a C compiler and the GlassSDK headers (MEMOMIND_SDK, default ../../../plugin-open-platform).
+// Needs a C compiler and the GlassSDK headers (MEMOMIND_SDK, default ../plugin-open-platform).
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { existsSync } from 'node:fs';

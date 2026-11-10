@@ -3,7 +3,7 @@
 // hook PermissionRequest, answers it with a simulated nod, and saves screenshots.
 //
 // Prereqs: relay running (wrangler dev), Browser Studio running with this plugin:
-//   node <SDK>/PhoneSDK/tools/run-browser-studio.mjs --plugin <repo>/plugins/agent-dashboard/phone --port 4173
+//   node <SDK>/PhoneSDK/tools/run-browser-studio.mjs --plugin <repo>/phone --port 4173
 // Run:
 //   RELAY_TOKEN=... STUDIO_URL=http://127.0.0.1:4173 OUT_DIR=/tmp node test/studio-smoke.mjs
 

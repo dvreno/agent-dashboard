@@ -55,11 +55,17 @@ The phone page shows the same approvals with Allow/Deny buttons, so you can use 
 
 You need Node 18+, a free Cloudflare account, and the
 [plugin-open-platform](https://github.com/memomind-open/plugin-open-platform) toolkit for Studio.
+Clone both side by side (the scripts look for `../plugin-open-platform` unless you set `MEMOMIND_SDK`):
+
+```sh
+git clone https://github.com/memomind-open/plugin-open-platform
+git clone https://github.com/dvreno/agent-dashboard
+```
 
 ### 1. Deploy the relay
 
 ```sh
-cd plugins/agent-dashboard/relay
+cd agent-dashboard/relay
 npm install
 npx wrangler login
 openssl rand -hex 24               # copy this token
@@ -72,7 +78,7 @@ curl https://memomind-agent-relay.<you>.workers.dev/health   # {"ok":true}
 
 ```sh
 mkdir -p ~/.claude/memomind
-cp plugins/agent-dashboard/hook/*.mjs ~/.claude/memomind/
+cp agent-dashboard/hook/*.mjs ~/.claude/memomind/
 ```
 
 Merge [`hook/settings.example.json`](hook/settings.example.json) into `~/.claude/settings.json`
@@ -88,7 +94,7 @@ Build the package first. This copies MemoMind's Web SDK from your toolkit checko
 `phone/vendor/`. The SDK isn't committed here because MemoMind keeps the rights to it:
 
 ```sh
-cd plugins/agent-dashboard
+cd agent-dashboard
 MEMOMIND_SDK=~/path/to/plugin-open-platform npm run package   # → dist/agent-dashboard-0.1.0.mmpkg
 ```
 
@@ -108,7 +114,7 @@ command that isn't allowlisted). The card appears on the glasses within about a 
 ## Development
 
 ```sh
-cd plugins/agent-dashboard
+cd agent-dashboard
 MEMOMIND_SDK=/path/to/plugin-open-platform npm run setup   # vendor the Web SDK into phone/vendor/ (gitignored)
 npm test                                       # 89 tests: relay, hook, HUD logic, render kit, and the
                                                # glasses plugin in a native simulator (needs cc + GlassSDK headers)
@@ -194,7 +200,7 @@ something to scroll (the hook used to cut it at 200).
 ### Build and run
 
 ```sh
-cd plugins/agent-dashboard
+cd agent-dashboard
 export MEMOMIND_SDK=~/MemoMind/plugin-open-platform
 python3 -m pip install PyNaCl                # build.py needs it for the review sidecars
 npm run build:glasses                       # → dist/agent_hud.gmp + .review.json + .review-source.enc
@@ -298,7 +304,7 @@ signs or deletes**, which still happens in the Duet app.
 
 1. Give the connector its own secret and redeploy the relay:
    ```sh
-   cd plugins/agent-dashboard/relay
+   cd agent-dashboard/relay
    openssl rand -hex 24                 # copy this; it becomes part of the connector URL
    npx wrangler secret put MCP_SECRET   # paste it
    npx wrangler deploy
@@ -339,3 +345,8 @@ RELAY_TOKEN=… MCP_SECRET=… node test/duet-connector-e2e.mjs
 - ~~Phase 3: MCP server~~ done: `glasses_notify`, `glasses_ask`, `glasses_converse` (see `hook/memomind-mcp.mjs`).
 - ~~Phase 4: custom `.gmp`~~ built: paged reader, icons, ring support (see above). Needs a Studio and hardware pass.
 - ~~Phase 5: voice replies~~ done (see Voice conversations above).
+
+## License
+
+MIT, see [LICENSE](LICENSE). MemoMind's SDKs are not included and stay under MemoMind's own terms:
+the build scripts copy them from your local plugin-open-platform checkout.

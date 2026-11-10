@@ -1,7 +1,7 @@
 // Compiles the glasses plugin for this computer, linked against a fake Host
 // (test/native/fake_host.c), so tests can run it without Studio or glasses.
 // Uses the reference liblz4 when pkg-config finds it, else a small built-in decoder.
-// Needs the GlassSDK headers: MEMOMIND_SDK=/path/to/plugin-open-platform (default ../../../plugin-open-platform).
+// Needs the GlassSDK headers: MEMOMIND_SDK=/path/to/plugin-open-platform (default ../plugin-open-platform).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';

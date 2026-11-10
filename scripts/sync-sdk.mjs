@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export function sdkRoot() {
   const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
-  return resolve(process.env.MEMOMIND_SDK || resolve(root, '../../../plugin-open-platform'));
+  return resolve(process.env.MEMOMIND_SDK || resolve(root, '../plugin-open-platform'));
 }
 
 export async function syncSdk() {

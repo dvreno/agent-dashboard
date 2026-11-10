@@ -18,7 +18,7 @@ devices. Do these in order and write the results in the table at the end.
 ## 0. Build
 
 ```sh
-cd plugins/agent-dashboard
+cd agent-dashboard
 export MEMOMIND_SDK=~/MemoMind/plugin-open-platform PYTHON=~/.cache/GMPluginSDK/venv/bin/python
 npm run build:glasses   # dist/agent_hud.gmp + agent_hud.review.json + agent_hud.review-source.enc
 npm run package         # dist/agent-dashboard-0.3.0.mmpkg
