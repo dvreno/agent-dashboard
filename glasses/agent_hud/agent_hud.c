@@ -2,8 +2,9 @@
  * Agent Dashboard for MemoMind glasses: a paged reader for Claude Code.
  *
  * The phone plugin relays Claude Code activity (phone/native-link.js). This
- * plugin keeps the scroll-back on the glasses, so paging is instant and costs
- * no Bluetooth: the phone only sends new text once. Approvals are answered
+ * plugin keeps a short window (the last 12 events) on the glasses, so paging
+ * is instant and costs no Bluetooth: the phone sends new text once and keeps
+ * the full history on its own page. Approvals are answered
  * here with a nod or a shake and sent back to the phone.
  *
  * Screen (600 x 350):
@@ -939,7 +940,9 @@ static void draw_footer(void)
     } else {
         uint32_t back = end - (s_app.top + s_app.visible_rows);
         if (s_app.top + s_app.visible_rows > end) back = 0U;
-        if (s_app.unread > 0U)
+        if (s_app.top <= s_app.hist.first && s_app.hist.dropped > 0U)
+            s_app.r.libc->snprintf(s_app.fmt, sizeof(s_app.fmt), "Oldest here - full history on the phone");
+        else if (s_app.unread > 0U)
             s_app.r.libc->snprintf(s_app.fmt, sizeof(s_app.fmt), "%u lines back   %u new",
                                    (unsigned)back, (unsigned)s_app.unread);
         else
@@ -950,7 +953,7 @@ static void draw_footer(void)
         hr_cell_set(&s_app.r, &s_app.foot_right, "");
     } else if (s_app.follow != 0U) {
         hr_cell_set(&s_app.r, &s_app.foot_right,
-                    hi_raw_active(&s_app.in) ? "ring/click: scroll back" : "click: scroll back");
+                    hi_raw_active(&s_app.in) ? "ring/click: read back" : "click/ring: read back");
     } else {
         hr_cell_set(&s_app.r, &s_app.foot_right, "double-click: live");
     }

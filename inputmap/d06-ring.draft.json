@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "rules": [
+    { "type": "usage_key", "page": 9, "usage": 1, "key": 4 },
+    { "type": "usage_key", "page": 9, "usage": 2, "key": 55 },
+    { "type": "usage_key", "page": 9, "usage": 3, "key": 54 }
+  ]
+}

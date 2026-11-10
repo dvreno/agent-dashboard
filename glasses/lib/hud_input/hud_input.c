@@ -24,7 +24,7 @@ void hi_init(hi_state_t *state, const gm_plugin_host_api_t *host,
     state->host = host;
     state->emit = emit;
     state->context = context;
-    state->raw_mode = HI_RAW_AUTO;
+    state->raw_mode = HI_RAW_OFF;
     state->wheel_step = HI_WHEEL_STEP_DEFAULT;
     if (host != 0) (void)gm_plugin_input_get(host, &state->ext);
     /* Navigation-style inputs repeat while held; everything else fires once. */

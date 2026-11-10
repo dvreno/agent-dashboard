@@ -1,6 +1,6 @@
 {
   "id": "com.dvreno.agent-dashboard",
-  "name": "Agent Dashboard",
+  "name": "Agent Dashboard HUD (dvreno)",
   "version": 1,
   "abi_version": 256,
   "provides": {

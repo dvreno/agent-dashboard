@@ -1,5 +1,8 @@
 /*
- * Scroll-back history: a ring of already-wrapped display lines.
+ * Short reading window: a ring of already-wrapped display lines.
+ *
+ * MemoMind's design guidance keeps long history on the phone, so the glasses
+ * hold only the last HIST_MAX_ENTRIES events; the phone page has the full log.
  *
  * Entries (one agent event or message) are wrapped to the body width once, when
  * they arrive, and stored as NUL-terminated lines in a fixed text pool. When the
@@ -12,9 +15,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define HIST_POOL_BYTES 24576U
-#define HIST_MAX_LINES 1024U
-#define HIST_MAX_ENTRY_BYTES 4096U
+#define HIST_MAX_ENTRIES 12U     /* events kept on the glasses */
+#define HIST_POOL_BYTES 6144U
+#define HIST_MAX_LINES 160U
+#define HIST_MAX_ENTRY_BYTES 1024U   /* the phone cuts longer text and says so */
 
 #define HIST_LINE_FIRST 0x01U   /* first line of its entry (gets the icon) */
 
@@ -41,6 +45,7 @@ typedef struct {
     uint32_t tail;              /* pool offset of the oldest line */
     uint32_t last_seq;          /* newest entry sequence number received */
     uint32_t dropped;           /* lines evicted since reset */
+    uint32_t entries;           /* entries with at least one stored line */
     uint8_t wrapped;            /* live text continues from the pool start */
 } hist_t;
 

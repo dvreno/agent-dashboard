@@ -59,11 +59,25 @@ function events(n, kind = 'tool', from = 0) {
   }));
 }
 
+/** Events that wrap to several lines each, so the 12-event window is taller than the screen. */
+function tall(n, from = 0) {
+  return Array.from({ length: n }, (_, i) => ({
+    kind: 'done', project: 'web', session: 's1', title: `Finished step-${from + i}`, text: 'line a\nline b\nline c',
+  }));
+}
+
+/** Opt in to the undocumented raw Input extension (off by default). */
+async function rawOn(sim, link, flush) {
+  link.config = { raw: true };
+  await sim.down(encodeConfig({ raw: true }));
+  await flush();
+}
+
 test('HELLO, icons over Bluetooth, and a clean exit', { skip }, async () => {
   const { sim, link, flush } = await setup();
   assert.equal(link.hello.width, 600);
   assert.equal(link.hello.height, 350);
-  assert.ok(link.hello.rawInput, 'raw HOGP input subscribed');
+  assert.equal(link.hello.rawInput, false, 'ring input comes through the inputmap (cooked buttons) by default');
   const screen = await sim.screen();
   assert.ok(screen.some((i) => i.type === 'image' && i.size === '16x16'), 'state icon arrived as an asset');
   // A second HELLO (e.g. reconnect) must not resend icons the glasses already have.
@@ -81,10 +95,10 @@ test('HELLO, icons over Bluetooth, and a clean exit', { skip }, async () => {
 
 test('live feed follows new output; scroll-back pages without Bluetooth', { skip }, async () => {
   const { sim, link, flush } = await setup();
-  link.addEvents(events(40));
+  link.addEvents(tall(40));
   await flush();
   let text = await sim.text();
-  assert.match(text, /Bash: npm run step-39/, 'newest line visible');
+  assert.match(text, /Finished step-39/, 'newest entry visible');
   assert.doesNotMatch(text, /step-0\b/, 'oldest scrolled off');
   assert.match(text, /LIVE/);
 
@@ -95,12 +109,21 @@ test('live feed follows new output; scroll-back pages without Bluetooth', { skip
   assert.doesNotMatch(text, /step-39/);
   assert.match(text, /lines back/);
 
+  // Only the last 12 events live on the glasses; the oldest page says where the rest is.
+  for (let i = 0; i < 20; i += 1) await sim.cmd('nav page_up');
+  text = await sim.text();
+  assert.match(text, /Finished step-28/);
+  assert.doesNotMatch(text, /step-27\b/);
+  assert.match(text, /full history on the phone/);
+  await sim.cmd('nav home');
+  await sim.cmd('button single');
+
   // New output while reading back: the view stays put, a counter grows.
-  link.addEvents(events(3, 'tool', 40));
+  link.addEvents(tall(3, 40));
   await flush();
   text = await sim.text();
   assert.doesNotMatch(text, /step-42/);
-  assert.match(text, /3 new/);
+  assert.match(text, /12 new/, '3 events of 4 lines each');
 
   // Double click: back to live.
   await sim.cmd('button double');
@@ -110,9 +133,35 @@ test('live feed follows new output; scroll-back pages without Bluetooth', { skip
   await sim.close();
 });
 
-test('ring: wheel, keys, page keys and touch swipes scroll', { skip }, async () => {
+test('ring (inputmap outputs): scroll, up/down, page and left/right keys', { skip }, async () => {
   const { sim, link, flush } = await setup();
-  link.addEvents(events(60));
+  link.addEvents(tall(20));
+  await flush();
+  const top = async () => {
+    const view = (await sim.sent()).map((m) => decodeUp(m.bytes)).findLast((m) => m.type === 'view');
+    return view.top;
+  };
+  await sim.sent();
+  await sim.cmd('nav up');
+  const start = await top();
+  await sim.cmd('nav scroll_up');     // SCROLL_UP(56)
+  await sim.cmd('nav page_up');       // PAGE_UP(54)
+  await sim.cmd('nav left');          // LEFT(2)
+  await sim.cmd('nav down');          // DOWN(1)
+  await sim.cmd('nav up');
+  const after = await top();
+  const page = 11;                    // visible rows - 1 with the fake 20 px font
+  assert.equal(start - after, 1 + page + page - 1 + 1, 'every mapped button moved the view');
+  await sim.cmd('nav home');          // HOME(6) -> live
+  assert.match(await sim.text(), /LIVE/);
+  await sim.close();
+});
+
+test('opt-in raw input: wheel, keys, page keys and touch swipes scroll', { skip }, async () => {
+  const { sim, link, flush } = await setup();
+  await rawOn(sim, link, flush);
+  assert.ok(link.hello.rawInput, 'raw subscription taken when the phone asks for it');
+  link.addEvents(tall(20));
   await flush();
   const top = async () => {
     await sim.sent();
@@ -216,7 +265,7 @@ test('BACK hides the card to read what led up to it, click returns', { skip }, a
   link.sync(state, Date.now(), state.pending[0]);
   await flush();
   assert.match(await sim.text(), /NOD yes/);
-  await sim.cmd('key 5');             // ring BACK
+  await sim.cmd('nav back');          // ring BACK(5) through the inputmap
   let text = await sim.text();
   assert.match(text, /step-4/);
   assert.match(text, /click to return/);
@@ -286,8 +335,10 @@ test('status header, offline banner and phone notices', { skip }, async () => {
 test('config: keymap overrides, raw input off, head paging off', { skip }, async () => {
   const sim = new GlassesSim(exe);
   await sim.cmd('start');
-  await sim.down(encodeEntries(1, Array.from({ length: 30 }, (_, i) => ({ kind: 1, text: `line ${i}` }))));
+  await sim.down(encodeEntries(1, Array.from({ length: 30 }, (_, i) => ({ kind: 1, text: `line ${i}\nmore\nmore` }))));
   await sim.sent();
+  await sim.down(encodeConfig({ raw: true }));
+  assert.ok((await sim.sent()).map((m) => decodeUp(m.bytes)).find((m) => m.type === 'hello').rawInput);
   // HI_IN_BUTTON_SINGLE (1) -> A_LIVE (8); raw off; no head paging.
   await sim.down(encodeConfig({ raw: false, wheelStep: 2, headPaging: false, keymap: [[1, 8]] }));
   const hello = (await sim.sent()).map((m) => decodeUp(m.bytes)).find((m) => m.type === 'hello');
@@ -304,6 +355,8 @@ test('config: keymap overrides, raw input off, head paging off', { skip }, async
 test('suspend releases the ring subscription, resume takes it back', { skip }, async () => {
   const sim = new GlassesSim(exe);
   await sim.cmd('start');
+  assert.deepEqual(await sim.cmd('resume'), ['INPUT 0'], 'no raw subscription by default');
+  await sim.down(encodeConfig({ raw: true }));
   assert.deepEqual(await sim.cmd('suspend'), ['INPUT 0']);
   assert.deepEqual(await sim.cmd('resume'), ['INPUT 11']);
   await sim.close();

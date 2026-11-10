@@ -6,7 +6,7 @@
 
 import { createGMPlugin, opusRecordingToOgg } from './vendor/gm-plugin-web-sdk.esm.js';
 import { createRelayClient } from './relay-client.js';
-import { CH_UP, NativeLink } from './native-link.js';
+import { CH_UP, GLASSES_WINDOW, NativeLink } from './native-link.js';
 import {
   applyFeed, buildScreen, createState, diffScreen, dropAsk, focusedAsk, handleInput, MAX_RECORDING_MS,
 } from './screen.js';
@@ -20,6 +20,7 @@ const $ = (id) => document.getElementById(id);
 const ui = {
   url: $('relay-url'), token: $('relay-token'), save: $('save'), test: $('test'),
   status: $('status'), connection: $('connection'), asks: $('asks'), log: $('log'),
+  history: $('history'), historyCount: $('history-count'),
 };
 
 let state = createState();
@@ -231,6 +232,28 @@ async function answer(id, decision, via, extra) {
 }
 
 
+const KIND_LABEL = ['you', 'tool', 'text', 'done', 'error', 'ask', 'note', 'system'];
+
+/** Full history on the phone; the glasses only keep the last few events. */
+function renderHistory() {
+  const entries = native.history();
+  const items = entries.slice(-200).reverse().map((entry) => {
+    const item = document.createElement('li');
+    item.dataset.kind = KIND_LABEL[entry.kind] ?? 'text';
+    const label = document.createElement('span');
+    label.className = 'kind';
+    label.textContent = KIND_LABEL[entry.kind] ?? 'text';
+    const text = document.createElement('pre');
+    text.textContent = entry.text;
+    item.append(label, text);
+    return item;
+  });
+  ui.history.replaceChildren(...items);
+  ui.historyCount.textContent = entries.length
+    ? `${entries.length} events; the glasses show the last ${Math.min(entries.length, GLASSES_WINDOW)}.`
+    : 'Nothing yet.';
+}
+
 async function pollLoop() {
   let backoff = 1000;
   while (!closed && client) {
@@ -240,6 +263,7 @@ async function pollLoop() {
       const hadFocus = focusedAsk(state)?.id;
       applyFeed(state, feed, Date.now());
       native.addEvents(feed.events, { showProject: state.sessions.size > 1 });
+      if (feed.events.length) renderHistory();
       setConnection('online');
       backoff = 1000;
       for (const event of feed.events) log(`${event.project || event.session}: ${event.title}${event.text ? ` — ${event.text}` : ''}`);

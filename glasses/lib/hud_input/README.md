@@ -8,8 +8,14 @@ Wearers give input in three ways, and each arrives through a different part of t
 | --- | --- | --- |
 | The button on the glasses | `GM_PLUGIN_EVENT_BUTTON`, `PRIMARY` single/double | `HI_SRC_BUTTON` |
 | Head gestures | `GM_PLUGIN_EVENT_IMU_GESTURE` nod/shake/left/right/raise/lower | `HI_SRC_HEAD` |
-| HOGP ring, remote, keyboard (cooked) | `GM_PLUGIN_EVENT_BUTTON` UP/DOWN/PAGE_*/SCROLL_*/BACK/HOME `TRIGGER` | `HI_SRC_NAV` |
-| HOGP ring, remote, keyboard (raw) | Input extension 4: keys, mouse buttons, wheel, touch swipes, media keys | `HI_SRC_RING` |
+| HOGP ring or remote, after the App's inputmap | `GM_PLUGIN_EVENT_BUTTON` UP/DOWN/LEFT/RIGHT/PAGE_*/SCROLL_*/BACK/HOME `TRIGGER`; SELECT arrives as `PRIMARY` | `HI_SRC_NAV` |
+| Raw HOGP (opt-in, undocumented) | Input extension 4: keys, mouse buttons, wheel, touch swipes, media keys | `HI_SRC_RING` |
+
+The official path for rings is the **inputmap** the user imports in the MemoMind App (docs:
+reference/hogp-inputmap). The glasses map the ring's HID usages to a fixed set of outputs and the
+Host delivers them as button events; plugins never see HID data. MENU, media and volume outputs never
+reach a plugin, and only one accessory is bound at a time. Input extension 4 exists in the SDK headers
+but isn't in the docs, so hud_input leaves it off unless you call `hi_set_raw(&in, HI_RAW_AUTO)`.
 
 hud_input turns all of them into one stream of normalized inputs (`HI_IN_*`), and your keymap turns
 each input into an action number of your own.
@@ -23,7 +29,7 @@ hi_map(&in, HI_IN_HEAD_NOD, ACT_YES);
 hi_map(&in, HI_IN_WHEEL_UP, ACT_LINE_UP);
 hi_map(&in, HI_IN_BUTTON_SINGLE, ACT_SELECT);
 
-hi_start(&in);                         // on_start / on_resume: claims raw HOGP input if available
+hi_start(&in);                         // on_start / on_resume (claims raw input only if you opted in)
 if (hi_on_event(&in, event)) return true;   // in on_event
 hi_guard_gestures(&in, now, 800);      // ignore a nod that was already happening when a card appeared
 hi_stop(&in);                          // on_suspend / on_stop
@@ -31,10 +37,9 @@ hi_stop(&in);                          // on_suspend / on_stop
 
 ## What it handles for you
 
-- **Raw HOGP subscription.** It claims KEY | REL | TOUCH from Input extension 4 when the firmware
-  has it, and falls back to the Host's cooked navigation buttons when it doesn't (older firmware,
-  or `hi_set_raw(&in, HI_RAW_OFF)`). Claimed classes no longer produce cooked events, so the same
-  key never counts twice.
+- **Inputmap buttons by default.** Ring buttons come in as the Host's button events. With
+  `hi_set_raw(&in, HI_RAW_AUTO)` it also claims KEY | REL | TOUCH from Input extension 4 when the
+  firmware has it; claimed classes no longer produce cooked events, so a key never counts twice.
 - **Wheel notches.** Wheel deltas accumulate and emit one `WHEEL_UP/DOWN` per `wheel_step` units
   (`hi_set_wheel_step` for rings with high-resolution wheels).
 - **Repeat.** A held navigation key repeats (`PHASE_REPEAT`); everything else fires once
@@ -56,8 +61,8 @@ the Agent Dashboard protocol).
 - R08: doesn't advertise HID, and the community firmware patch for it is an **untrusted binary**.
 - Proprietary BLE (GATT) controllers don't work: only HID Button Usage Page (HOGP) devices do.
 
-Which raw keys each ring sends is not documented. Log `EVT_INPUT` on the phone during the
-hardware tests and adjust the keymap.
+What each ring's buttons send is not documented. Record them in the App and write an inputmap; see
+[`inputmap/README.md`](../../../inputmap/README.md) for the files and steps.
 
 Tests: `test/native-hud.test.mjs` covers cooked nav, raw keys with repeat, wheel, touch swipes,
 remapping, raw off and suspend/resume.

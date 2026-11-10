@@ -14,7 +14,7 @@ Claude Code (MacBook)                Cloudflare Worker              MemoMind App
 | Relay | [`relay/`](relay/) | Cloudflare Workers (free plan), one Durable Object. Also serves the remote MCP connector for Claude Duet |
 | Hook | [`hook/memomind-hook.mjs`](hook/memomind-hook.mjs) | Your computer, called by Claude Code |
 | Phone plugin | [`phone/`](phone/) | MemoMind App WebView. Talks to the glasses plugin below, or falls back to the stock `web_bridge` GMP |
-| Glasses plugin | [`glasses/agent_hud/`](glasses/agent_hud/) | The glasses (`.gmp`, C). Paged reader with scroll-back, icons, ring support (phase 4) |
+| Glasses plugin | [`glasses/agent_hud/`](glasses/agent_hud/) | The glasses (`.gmp`, C). Paged reader for the last 12 events, icons, ring support (phase 4) |
 
 Status: phases 1–5 are built. Phase 4 (the glasses plugin) is tested with a native simulator that
 runs the real C code on a fake Host, and its `.gmp` builds with the official `build.py`.
@@ -116,7 +116,7 @@ command that isn't allowlisted). The card appears on the glasses within about a 
 ```sh
 cd agent-dashboard
 MEMOMIND_SDK=/path/to/plugin-open-platform npm run setup   # vendor the Web SDK into phone/vendor/ (gitignored)
-npm test                                       # 89 tests: relay, hook, HUD logic, render kit, and the
+npm test                                       # 96 tests: relay, hook, HUD logic, render kit, inputmaps, and the
                                                # glasses plugin in a native simulator (needs cc + GlassSDK headers)
 
 # local relay
@@ -153,8 +153,12 @@ All routes except `/health` need `Authorization: Bearer <RELAY_TOKEN>`.
 ## Paged reader on the glasses (phase 4)
 
 Terminal Mode's main complaints in the MemoMind Discord are that text moves too fast and that you
-can't scroll back. Phase 4 adds a native glasses plugin that keeps the scroll-back **on the
-glasses**. The phone sends each line once, and paging costs no Bluetooth.
+can't scroll back. Phase 4 adds a native glasses plugin with a short reading window: the glasses keep
+the **last 12 events** and page through them locally, so paging costs no Bluetooth. The **full
+history stays on the phone page**, following MemoMind's design guidance ("Keep long forms, history,
+and detailed instructions on the phone", design/index). Text longer than about 1000 bytes is cut on
+the glasses with "... (full text on the phone)", and the oldest page of the window says
+"Oldest here - full history on the phone".
 
 ```
  Claude · web - working                        14:05
@@ -175,9 +179,16 @@ glasses**. The phone sends each line once, and paging costs no Bluetooth.
 | Double click | Back to live | Next card |
 | Nod / shake | – | Allow (or arm, if high risk) / deny |
 | Head left / right | Page back / forward (can be turned off) | Scroll the card's detail |
-| Ring wheel, up/down keys | One line | Scroll the card's detail |
-| Ring page keys, swipes, media prev/next | One page | Scroll the card's detail |
-| Ring back / mouse right | Back to live | Hide the card to read what led up to it (click returns) |
+| Ring scroll or up/down | One line | Scroll the card's detail |
+| Ring page or left/right | One page | Scroll the card's detail |
+| Ring select | Same as a click | Same as a click |
+| Ring back | Back to live | Hide the card to read what led up to it (click returns) |
+
+Ring buttons reach the plugin only through an **inputmap** imported in the MemoMind App
+(Third-party devices (HOGP) → Mapping table). The glasses turn the ring's HID reports into ordinary
+button events; MENU, media and volume keys never reach a plugin, and only one ring can be bound at a
+time. [`inputmap/`](inputmap/) has a map for remotes that send the official five-key sample's usages,
+an **unverified draft for the D06 ring**, and the steps to record your own ring's buttons.
 
 The phone plugin detects the glasses plugin automatically (HELLO on channel `0x4145`). If none
 answers within 2.5 s, it falls back to the phase 1–3 text screens through the stock web bridge.
@@ -188,14 +199,22 @@ Two parts are written as standalone libraries so they can be published separatel
   LVGL text/shape helpers that skip unchanged text; green-channel GRAY_4 (4 bits, 2 px/byte); LZ4;
   only changed tiles; assets (the icons) sent over Bluetooth after launch instead of linked into Flash.
 - [`glasses/lib/hud_input/`](glasses/lib/hud_input/): one API for the glasses button, head gestures,
-  cooked HOGP navigation and raw HOGP events (keys, wheel, swipes, media keys), with a keymap the
-  phone can change at runtime.
+  and HOGP rings as the Host delivers them after the App's inputmap, with a keymap the phone can
+  change at runtime. It can also claim the SDK's Input extension 4 for raw keys, wheel and swipes,
+  but that is off by default: the official docs only describe the inputmap path.
 
 The protocol is in [`glasses/agent_hud/agent_proto.h`](glasses/agent_hud/agent_proto.h) (C) and
-[`phone/native-link.js`](phone/native-link.js) (JS). The `.gmp` is about 16 KB of the 500 KiB Flash limit.
+[`phone/native-link.js`](phone/native-link.js) (JS).
 
-Claude's final message is now kept up to 4000 characters, with line breaks, so the scroll-back has
-something to scroll (the hook used to cut it at 200).
+Glasses limits it is checked against: Flash 500 KiB (the `.gmp` is about 16 KB), static RAM under
+100 KiB (8 B; the 6 KB window and other state are allocated at start), and at most 1024 B of stack per
+function (the build fails otherwise). The glasses cache plugins by `manifest.name`, not `id`, and hold
+at most 28 records, so the `.gmp` is named **"Agent Dashboard HUD (dvreno)"** to avoid clashing with
+another plugin. The Host restores display brightness when the plugin stops; the plugin doesn't change
+brightness.
+
+Claude's final message is now kept up to 4000 characters, with line breaks (the hook used to cut it
+at 200). The phone page shows all of it; the glasses show the first 1000 bytes.
 
 ### Build and run
 
@@ -343,7 +362,7 @@ RELAY_TOKEN=… MCP_SECRET=… node test/duet-connector-e2e.mjs
 ## Roadmap
 
 - ~~Phase 3: MCP server~~ done: `glasses_notify`, `glasses_ask`, `glasses_converse` (see `hook/memomind-mcp.mjs`).
-- ~~Phase 4: custom `.gmp`~~ built: paged reader, icons, ring support (see above). Needs a Studio and hardware pass.
+- ~~Phase 4: custom `.gmp`~~ built: paged reader for the last 12 events (full history on the phone), icons, ring support through inputmaps (see above). Needs a Studio and hardware pass.
 - ~~Phase 5: voice replies~~ done (see Voice conversations above).
 
 ## License

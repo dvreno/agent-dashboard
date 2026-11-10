@@ -102,8 +102,8 @@ typedef struct {
 typedef void (*hi_emit_fn)(void *context, uint8_t action, const hi_event_t *event);
 
 /* Raw-mode options (hi_set_raw). */
-#define HI_RAW_OFF 0U    /* keep Host cooked navigation only */
-#define HI_RAW_AUTO 1U   /* subscribe to Input extension 4 when available (default) */
+#define HI_RAW_OFF 0U    /* Host cooked buttons only: what the inputmap delivers (default) */
+#define HI_RAW_AUTO 1U   /* also claim undocumented Input extension 4 when present */
 
 #define HI_WHEEL_STEP_DEFAULT 1      /* wheel units per emitted notch */
 #define HI_GESTURE_GAP_MS 350U       /* drop duplicate gesture edges inside this */

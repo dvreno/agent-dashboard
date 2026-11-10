@@ -2,9 +2,11 @@
 // activity into the binary protocol in glasses/agent_hud/agent_proto.h and
 // decodes what the glasses send back. Pure logic: the caller provides send().
 //
-// What goes over Bluetooth: each history entry once (the glasses keep the
-// scroll-back and page locally), a small status message when it changes,
-// approval cards, and the icon set once (only icons the glasses lack).
+// What goes over Bluetooth: each recent entry once (the glasses keep a short
+// window of the last GLASSES_WINDOW events and page it locally), a small status
+// message when it changes, approval cards, and the icon set once (only icons
+// the glasses lack). The full history stays on the phone page, as MemoMind's
+// design guidance asks (design/index: keep history on the phone).
 
 import { assetMessages, asciiToLevels } from './lib/hud-render-kit.js';
 import { ICONS } from './icons.js';
@@ -24,7 +26,9 @@ const DECISIONS = { 1: 'allow', 2: 'deny', 3: 'talk' };
 const VIAS = { 1: 'nod', 2: 'shake', 3: 'nod+button', 4: 'ring' };
 const VIEWS = ['live', 'history', 'card'];
 
-const MAX_ENTRY_BYTES = 4000;      // glasses HIST_MAX_ENTRY_BYTES is 4096
+export const GLASSES_WINDOW = 12;  // glasses HIST_MAX_ENTRIES
+const MAX_ENTRY_BYTES = 1000;      // glasses HIST_MAX_ENTRY_BYTES is 1024
+export const MORE_ON_PHONE = '\n... (full text on the phone)';
 const MAX_MESSAGE_BYTES = 3000;    // keep single Bluetooth messages small
 const MAX_LOG = 400;
 
@@ -58,11 +62,23 @@ export const encodeAskClear = (id) => new Writer().u8(CMD.ASK_CLEAR).u32(id).don
 export const encodeAnswerAck = (id, ok) => new Writer().u8(CMD.ANSWER_ACK).u32(id).u8(ok ? 1 : 0).done();
 export const encodeNotice = (text) => new Writer().u8(CMD.NOTICE).str8(text, 63).done();
 
+/** Entry text as UTF-8 for the glasses; long text is cut and points at the phone. */
+export function glassesText(text) {
+  const full = encoder.encode(String(text ?? ''));
+  if (full.length <= MAX_ENTRY_BYTES) return full;
+  const tail = encoder.encode(MORE_ON_PHONE);
+  const head = utf8(text, MAX_ENTRY_BYTES - tail.length);
+  const out = new Uint8Array(head.length + tail.length);
+  out.set(head);
+  out.set(tail, head.length);
+  return out;
+}
+
 /** entries: [{ kind: number, text }]; firstSeq is the sequence number of entries[0]. */
 export function encodeEntries(firstSeq, entries) {
   const w = new Writer().u8(CMD.ENTRIES).u32(firstSeq).u8(entries.length);
   for (const entry of entries) {
-    const text = utf8(entry.text, MAX_ENTRY_BYTES);
+    const text = glassesText(entry.text);
     w.u8(entry.kind).u8(0).u16(text.length).raw(text);
   }
   return w.done();
@@ -81,7 +97,7 @@ export function encodeAsk({ id, risk, kind, seconds, title, project, detail }) {
 }
 
 /** config: { raw: bool, wheelStep: 1..255, headPaging: bool, keymap: [[hiInput, action], ...] } */
-export function encodeConfig({ raw = true, wheelStep = 1, headPaging = true, keymap = [] } = {}) {
+export function encodeConfig({ raw = false, wheelStep = 1, headPaging = true, keymap = [] } = {}) {
   const w = new Writer().u8(CMD.CONFIG).u8(raw ? 1 : 0).u8(wheelStep).u8(headPaging ? 1 : 0).u8(keymap.length);
   for (const [input, action] of keymap) w.u8(input).u8(action);
   return w.done();
@@ -252,7 +268,7 @@ export class NativeLink {
       size = 6;
     };
     for (const entry of list) {
-      const bytes = Math.min(encoder.encode(entry.text).length, MAX_ENTRY_BYTES) + 4;
+      const bytes = glassesText(entry.text).length + 4;
       if (batch.length && (size + bytes > MAX_MESSAGE_BYTES || batch.length >= 250)) flush();
       batch.push(entry);
       size += bytes;
@@ -260,8 +276,21 @@ export class NativeLink {
     flush();
   }
 
+  /** Sequence number of the oldest entry the glasses should hold. */
+  windowStart() {
+    const n = this.entries.length;
+    return n ? this.entries[Math.max(0, n - GLASSES_WINDOW)].seq : 1;
+  }
+
+  /** Send entries from seq on, but never more than the glasses window. */
   sendFrom(seq) {
-    this.sendEntries(this.entries.filter((entry) => entry.seq >= seq));
+    const from = Math.max(seq, this.windowStart());
+    this.sendEntries(this.entries.filter((entry) => entry.seq >= from));
+  }
+
+  /** Full history for the phone page, oldest first. */
+  history() {
+    return this.entries;
   }
 
   /** Push status and approval cards that changed. state is screen.js state. */
@@ -344,9 +373,10 @@ export class NativeLink {
         this.sentStatus = '';
         this.sentAsks.clear();
         const newest = this.entries.length ? this.entries[this.entries.length - 1].seq : 0;
-        const oldest = this.entries.length ? this.entries[0].seq : 1;
+        const oldest = this.windowStart();
         if (first || message.lastSeq > newest || (message.lastSeq > 0 && message.lastSeq + 1 < oldest)) {
-          // New phone session, or the glasses hold history we no longer know: start clean.
+          // New phone session, the glasses hold entries we no longer know, or they are
+          // so far behind that a gap would open: start clean with the recent window.
           this.out(encodeReset());
           this.sendFrom(oldest);
         } else {
@@ -360,9 +390,9 @@ export class NativeLink {
       }
       case 'need':
         this.log(`Glasses asked for history from #${message.fromSeq}`);
-        if (this.entries.length && message.fromSeq < this.entries[0].seq) {
+        if (this.entries.length && message.fromSeq < this.windowStart()) {
           this.out(encodeReset());
-          this.sendFrom(this.entries[0].seq);
+          this.sendFrom(this.windowStart());
         } else {
           this.sendFrom(message.fromSeq);
         }

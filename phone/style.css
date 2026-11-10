@@ -60,3 +60,9 @@ button.deny { background: var(--danger); margin-left: 8px; }
 .ask.listen { border-color: var(--accent); }
 .ask.listen input { margin: 0 0 8px; }
 .ask.listen .row button.deny { margin-left: 0; }
+
+#history { list-style: none; padding: 0; margin: 0; max-height: 420px; overflow: auto; }
+#history li { display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid #22302a; }
+#history .kind { flex: 0 0 44px; font-size: 11px; color: var(--muted); text-transform: uppercase; padding-top: 2px; }
+#history pre { flex: 1; margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; }
+#history li[data-kind="error"] pre { color: var(--warn); }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CMD, encodeAsk, eventToEntry, KIND, NativeLink, STATE, statusFor, utf8 } from '../phone/native-link.js';
+import { CMD, encodeAsk, encodeConfig, eventToEntry, GLASSES_WINDOW, glassesText, KIND, MORE_ON_PHONE, NativeLink, STATE, statusFor, utf8 } from '../phone/native-link.js';
 import { createState } from '../phone/screen.js';
 
 function hello(lastSeq, hashes = []) {
@@ -28,6 +28,34 @@ test('first HELLO resets the glasses and sends the whole log', () => {
   link.onMessage(hello(0));
   assert.equal(sent[0][0], CMD.RESET);
   assert.deepEqual(firstSeqs(sent), [1]);
+});
+
+test('the glasses get only the recent window; the phone keeps everything', () => {
+  const { link, sent } = linkWithLog(50);
+  link.onMessage(hello(0));
+  assert.equal(GLASSES_WINDOW, 12);
+  assert.deepEqual(firstSeqs(sent), [50 - GLASSES_WINDOW + 1]);
+  assert.equal(link.history().length, 50);
+  // Glasses far behind (would leave a gap): start clean with the window.
+  sent.length = 0;
+  link.onMessage(hello(10, link.hello.assetHashes));
+  assert.equal(sent[0][0], CMD.RESET);
+  assert.deepEqual(firstSeqs(sent), [39]);
+});
+
+test('long text is cut for the glasses and points at the phone', () => {
+  const short = 'ok';
+  assert.equal(new TextDecoder().decode(glassesText(short)), short);
+  const long = '€'.repeat(800);
+  const cut = new TextDecoder().decode(glassesText(long));
+  assert.ok(new TextEncoder().encode(cut).length <= 1000);
+  assert.ok(cut.endsWith(MORE_ON_PHONE));
+  assert.ok(!cut.includes('\uFFFD'), 'no split characters');
+});
+
+test('raw ring input is opt-in; inputmap buttons are the default', () => {
+  assert.equal(encodeConfig()[1], 0);
+  assert.equal(encodeConfig({ raw: true })[1], 1);
 });
 
 test('a later HELLO (reconnect) only sends what the glasses miss', () => {

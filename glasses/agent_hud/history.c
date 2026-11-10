@@ -19,6 +19,7 @@ void hist_reset(hist_t *h)
     h->tail = 0U;
     h->last_seq = 0U;
     h->dropped = 0U;
+    h->entries = 0U;
     h->wrapped = 0U;
 }
 
@@ -43,6 +44,20 @@ static void evict(hist_t *h)
         h->tail = h->lines[h->first % HIST_MAX_LINES].off;
         if (h->tail < old_tail) h->wrapped = 0U;  /* tail followed head to the start */
     }
+    /* The oldest entry is gone once the new oldest line starts another one. */
+    if (h->entries > 0U &&
+        (h->count == 0U || (h->lines[h->first % HIST_MAX_LINES].flags & HIST_LINE_FIRST) != 0U))
+        h->entries--;
+}
+
+/* Drop whole entries until there is room for one more. */
+static void trim_entries(hist_t *h)
+{
+    while (h->count > 0U && h->entries >= HIST_MAX_ENTRIES) {
+        uint32_t before = h->entries;
+        while (h->count > 0U && h->entries == before) evict(h);
+    }
+    if (h->count == 0U) h->entries = 0U;
 }
 
 /* Reserve n contiguous bytes, dropping the oldest lines as needed. */
@@ -104,6 +119,8 @@ uint32_t hist_append(hist_t *h, uint8_t kind, const char *utf8, uint32_t length)
     const char *p;
     uint8_t flags = HIST_LINE_FIRST;
     if (length > HIST_MAX_ENTRY_BYTES) length = HIST_MAX_ENTRY_BYTES;
+    trim_entries(h);
+    h->entries++;
     /* Copy, turning tabs/CR/control bytes into spaces so wrapping is stable. */
     for (i = 0; i < length && utf8[i] != '\0'; ++i) {
         char c = utf8[i];
